@@ -147,6 +147,8 @@ countdown; press the listed button or power-cycle during it):
 /ip/hotspot/walled-garden print
 /ip/hotspot/walled-garden/ip print
 /ip/hotspot/ip-binding print   # the Pi is "bypassed"
+/ip/dhcp-server print          # piso-dhcp on "bridge", factory dhcp1 disabled
+/ip/dhcp-server/network print  # 192.168.88.0/24 -> gateway + DNS 192.168.88.1
 /ip/dns/static print           # portal.piso.local -> 192.168.88.2
 /user print                    # piso-controller
 /ip/service print              # www-ssl enabled, www/telnet/ftp disabled
@@ -162,6 +164,11 @@ countdown; press the listed button or power-cycle during it):
 
 * It never removes your firewall filter rules, NAT rules or existing hotspot
   users — it only adds what is missing and re-applies its own settings.
+* The one thing it *disables* is any other DHCP server already listening on
+  `bridge` (the factory `dhcp1`), because RouterOS allows only one
+  directly-connected DHCP server per interface and `piso-dhcp` needs to own the
+  customer LAN. It is parked with a comment, not deleted, so you can re-enable
+  it if you ever revert.
 * It does not change the admin account or the Wi-Fi country/regulatory
   settings; pick the country once in **QuickSet** so the radio is legal.
 * It does not touch the Pi's own firewall. Only `5000` needs to be reachable

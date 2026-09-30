@@ -96,11 +96,24 @@
     /ip/pool add name=$addressPool ranges="192.168.88.10-192.168.88.200" comment="PisoPilot clients"
 }
 :local dhcpServer "piso-dhcp"
+# RouterOS allows only one directly-connected DHCP server per interface, and the
+# factory config already ships one on the bridge - park it before adding ours.
+# It is only disabled (never deleted), so it can be restored if you revert.
+:foreach existing in=[/ip/dhcp-server find where interface=$lanBridge] do={
+    :if ([/ip/dhcp-server get $existing name] != $dhcpServer) do={
+        /ip/dhcp-server set $existing disabled=yes comment="PisoPilot: replaced by piso-dhcp"
+    }
+}
 :if ([:len [/ip/dhcp-server find where name=$dhcpServer]] = 0) do={
     /ip/dhcp-server add name=$dhcpServer interface=$lanBridge address-pool=$addressPool lease-time=2h disabled=no comment="PisoPilot DHCP"
 }
+/ip/dhcp-server set [find where name=$dhcpServer] disabled=no interface=$lanBridge address-pool=$addressPool
 :if ([:len [/ip/dhcp-server/network find where address=$lanNetwork]] = 0) do={
     /ip/dhcp-server/network add address=$lanNetwork gateway=$gateway dns-server=$gateway netmask=24 comment="PisoPilot LAN"
+} else={
+    # the factory entry already matches this subnet - keep it, but make sure it
+    # carries our gateway and DNS before the hotspot starts answering clients
+    /ip/dhcp-server/network set [find where address=$lanNetwork] gateway=$gateway dns-server=$gateway
 }
 
 # Upstream: DHCP client on ether1 and masquerade out of it.
@@ -259,5 +272,6 @@
 :put "  /ip/hotspot print               (should show piso-hotspot on the bridge)"
 :put "  /ip/hotspot/profile print       (login-by should include mac)"
 :put "  /ip/hotspot/user print          (one user per paying MAC)"
+:put "  /ip/dhcp-server print           (piso-dhcp active, factory server disabled)"
 :put "  /ip/dns/static print            (portal.piso.local -> $portalIp)"
 :put "  /user print                     (api user: $apiUser)"
