@@ -1,0 +1,22 @@
+/* Live internet status chip, sound toggle, and uplink banner. Shared by both consoles. */
+.net-status { display:inline-flex; align-items:center; gap:8px; padding:7px 11px; border:1px solid var(--line); color:var(--muted); background:#fff; font:10px "DM Mono",monospace; }
+.net-status .net-dot { width:8px; height:8px; border-radius:50%; background:#b9c4c0; box-shadow:0 0 0 4px rgba(185,196,192,.25); }
+.net-status strong { font:500 10px "DM Mono",monospace; letter-spacing:.4px; }
+.net-status small { color:var(--muted); font:10px "DM Mono",monospace; }
+.net-status[data-net-state="online"] { color:var(--green); border-color:#bfe3c8; background:#f2fbf4; }
+.net-status[data-net-state="online"] .net-dot { background:var(--green); box-shadow:0 0 0 4px rgba(40,120,77,.16); }
+.net-status[data-net-state="offline"] { color:var(--red,#bd4f45); border-color:#edc6c1; background:#fdf3f1; }
+.net-status[data-net-state="offline"] .net-dot { background:var(--red,#bd4f45); box-shadow:0 0 0 4px rgba(189,79,69,.16); animation:net-pulse 1.5s infinite; }
+.net-status[data-net-state="checking"] { color:#9b691d; border-color:#efd6a7; background:#fff8e9; }
+.net-status[data-net-state="checking"] .net-dot { background:#d9a95c; animation:net-pulse 1.1s infinite; }
+@keyframes net-pulse { 0%,100% { opacity:1; } 50% { opacity:.3; } }
+.sound-toggle { padding:7px 10px; border:1px solid var(--line); color:var(--muted); background:#fff; font:10px "DM Mono",monospace; cursor:pointer; }
+.sound-toggle:hover { color:var(--ink); background:var(--mint); }
+.sound-toggle[aria-pressed="false"] { color:var(--red,#bd4f45); }
+.sound-toggle[data-sound-blocked="1"] { color:#9b691d; border-color:#efd6a7; background:#fff8e9; }
+.net-alert { display:flex; gap:11px; align-items:center; margin:0 0 20px; padding:13px 16px; border:1px solid #edc6c1; border-left:4px solid var(--red,#bd4f45); color:#8f3a31; background:#fdf3f1; font-size:.78rem; line-height:1.5; }
+.net-alert[hidden] { display:none; }
+.net-alert strong { font-size:.78rem; }
+.portal-header-meta { display:flex; align-items:center; gap:9px; }
+@media (max-width:760px) { .portal-header-meta { flex-wrap:wrap; justify-content:flex-end; } }
+@media (max-width:600px) { .net-status small { display:none; } }

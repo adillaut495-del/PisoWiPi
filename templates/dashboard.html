@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PisoPilot | Admin Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vouchers.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='modals.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='coin-flow.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='net-status.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='clients.css') }}">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">P</span><div><strong>PISOPILOT</strong><small>LOCAL CONSOLE</small></div></div>
+      <nav>
+        <a class="nav-link active" href="#overview">Overview <span>01</span></a>
+        <a class="nav-link" href="#pricing">Pricing &amp; rates <span>02</span></a>
+        <a class="nav-link" href="#vouchers">Vouchers <span>03</span></a>
+        <a class="nav-link" href="#clients">Clients <span>04</span></a>
+        <a class="nav-link" href="#hardware">Hardware <span>05</span></a>
+        <a class="nav-link" href="#settings">Network &amp; security <span>06</span></a>
+        <a class="nav-link" href="#logs">Logs <span>07</span></a>
+      </nav>
+      <div class="sidebar-foot"><span class="online-dot"></span> Controller online<a href="{{ url_for('logout') }}">Sign out</a></div>
+    </aside>
+    <main class="main-content">
+      <header class="page-header" id="overview"><div><p class="eyebrow">ADMINISTRATION / OVERVIEW</p><h1>Good day, operator.</h1><p class="muted">One view of the machine, its network, and every peso moving through it.</p></div><div class="header-actions"><span class="net-status" data-net-status data-net-state="{{ internet.state }}" data-net-url="{{ url_for('internet_status_api') }}" data-net-interval="5" data-net-sound="1"><span class="net-dot"></span><strong data-net-label>{{ {'online': 'Internet online', 'offline': 'Internet offline'}.get(internet.state, 'Checking internet') }}</strong><small data-net-latency>{% if internet.state == 'online' and internet.latency_ms is not none %}{{ internet.latency_ms|round|int }} ms{% endif %}</small></span><span class="last-sync">LIVE PANELS / AUTO REFRESH</span><button class="sound-toggle" type="button" data-sound-toggle aria-pressed="true">Sound on</button><a class="button secondary" href="#settings">Settings</a></div></header>
+      <div class="net-alert" data-net-alert{% if internet.state != 'offline' %} hidden{% endif %}><div><strong>Internet uplink is offline.</strong> Connected clients keep their countdown and coin requests are still recorded, but nobody reaches the internet until the modem or ISP link is back.</div></div>
+      <section class="metric-grid">
+        <article class="metric-card orange"><span class="metric-label">Today's revenue</span><strong>P{{ '%.2f'|format(totals.today_revenue) }}</strong><small>Local time / {{ totals.coin_count }} total coins</small></article>
+        <article class="metric-card"><span class="metric-label">This month's revenue</span><strong>P{{ '%.2f'|format(totals.month_revenue) }}</strong><small>Rolling calendar month</small></article>
+        <article class="metric-card"><span class="metric-label">Total collections</span><strong>P{{ '%.2f'|format(totals.revenue) }}</strong><small>{{ totals.minutes }} minutes issued</small></article>
+        <article class="metric-card green"><span class="metric-label">Active clients</span><strong>{{ active_users }}</strong><small>Connected sessions right now</small></article>
+      </section>
+      <section class="two-column">
+        <div class="panel resource-panel"><div class="panel-heading"><div><p class="eyebrow">DEVICE HEALTH</p><h2>Raspberry Pi resources</h2></div><span class="live-chip">LIVE</span></div><div class="resource-grid"><div><span>CPU load</span><strong>{{ metrics.cpu_percent }}<em>%</em></strong><div class="meter"><i style="width: {{ [metrics.cpu_percent, 100]|min }}%"></i></div></div><div><span>Free memory</span><strong>{{ metrics.memory_free_mb }}<em> MB</em></strong><div class="meter"><i style="width:68%"></i></div></div><div><span>Free storage</span><strong>{{ metrics.storage_free_gb }}<em> GB</em></strong><div class="meter"><i style="width:31%"></i></div></div><div><span>CPU temperature</span><strong>{{ metrics.temperature }}</strong><div class="meter"><i class="safe" style="width:24%"></i></div></div></div></div>
+        <div class="panel hardware-panel" id="hardware"><div class="panel-heading"><div><p class="eyebrow">HARDWARE LINKS</p><h2>Machine status</h2></div></div>{% for key, value in hardware.items() %}<div class="status-row"{% if key == 'internet' %} data-net-row{% endif %}><span class="status-icon {{ 'warn' if value != 'online' else '' }}"></span><div><strong>{{ key.replace('_', ' ')|title }}</strong><small>{{ value|title }}</small></div><span class="status-tag {{ 'warn' if value != 'online' else '' }}">{{ 'READY' if value == 'online' else 'ADAPTER' }}</span></div>{% endfor %}<p class="adapter-note">GPIO and router adapters are isolated for safe testing. Their controls become active when drivers are configured.</p></div>
+      </section>
+      <section class="panel pricing-panel" id="pricing"><div class="panel-heading"><div><p class="eyebrow">PRICING ENGINE</p><h2>Access plans and coin mapping</h2><p class="muted">Create, tune, or retire the offers customers see at the portal.</p></div><div class="panel-heading-actions"><span class="panel-note">TIME / DATA CAPS</span><button class="button" type="button" data-modal-open="create-plan-modal">New plan <span>-&gt;</span></button></div></div><div class="table-wrap"><table class="pricing-table"><thead><tr><th>Plan</th><th>Coin</th><th>Base time</th><th>Bonus</th><th>Cap mode</th><th>Actions</th></tr></thead><tbody>{% for plan in plans %}<tr><td><strong>{{ plan.name }}</strong><small class="table-sub">Plan #{{ plan.id }}</small></td><td>P{{ '%.2f'|format(plan.denomination) }}</td><td>{{ plan.minutes }} min</td><td class="credit">{% if plan.bonus_minutes %}+{{ plan.bonus_minutes }} min{% else %}-{% endif %}</td><td><span class="tag">{{ plan.cap_type }}{% if plan.data_limit_mb %} / {{ plan.data_limit_mb }} MB{% endif %}</span></td><td class="plan-actions"><button class="icon-action" type="button" data-modal-open="edit-plan-{{ plan.id }}">Edit</button><button class="icon-action danger" type="button" data-modal-open="delete-plan-{{ plan.id }}">Archive</button></td></tr>{% else %}<tr><td colspan="6" class="empty-state">No active plans. Create your first access plan.</td></tr>{% endfor %}</tbody></table></div><div class="pricing-footer"><span>Changes apply to new sessions only.</span><span>{{ plans|length }} active plans</span></div><div class="coin-rate-strip"><div class="coin-rate-heading"><p class="eyebrow">COIN RATES</p><strong>What each coin pays at the portal</strong><span>Straight from the plan rows above: coins add up, so a bigger total is paid at the best plan it covers, and an amount with no plan falls back to the standard rate ({{ minutes_per_peso }} min per peso).</span></div><div class="coin-rate-grid">{% for option in coin_options %}<div class="coin-rate-card{% if option.hint %} has-hint{% endif %}"><span class="coin-rate-amount">P{{ '%.0f'|format(option.amount) }}</span><strong>{{ option.minutes }}<small>MIN</small></strong><small class="coin-rate-source">{{ option.source }}</small>{% if option.hint %}<em class="coin-rate-hint">{{ option.hint }}</em>{% endif %}</div>{% endfor %}</div></div>{% for plan in plans %}<div class="admin-modal" id="edit-plan-{{ plan.id }}" aria-hidden="true"><div class="modal-card"><div class="modal-heading"><div><p class="eyebrow">EDIT PLAN / #{{ plan.id }}</p><h3>Update {{ plan.name }}</h3></div><button class="modal-close" type="button" data-modal-close>Close</button></div><form method="post" action="{{ url_for('update_plan', plan_id=plan.id) }}" class="modal-form"><div class="modal-form-grid"><label>Plan name<input name="name" value="{{ plan.name }}" required></label><label>Coin denomination<input name="denomination" type="number" value="{{ plan.denomination }}" min="0.01" step="0.01" required></label><label>Base minutes<input name="minutes" type="number" value="{{ plan.minutes }}" min="1" required></label><label>Bonus minutes<input name="bonus_minutes" type="number" value="{{ plan.bonus_minutes }}" min="0"></label><label>Cap mode<select name="cap_type"><option value="time" {% if plan.cap_type == 'time' %}selected{% endif %}>Time capped</option><option value="data" {% if plan.cap_type == 'data' %}selected{% endif %}>Data capped</option></select></label><label>Data limit (MB)<input name="data_limit_mb" type="number" value="{{ plan.data_limit_mb or '' }}" min="1"></label></div><div class="modal-actions"><button class="button secondary" type="button" data-modal-close>Cancel</button><button class="button" type="submit">Save changes</button></div></form></div></div><div class="admin-modal" id="delete-plan-{{ plan.id }}" aria-hidden="true"><div class="modal-card modal-card-small"><div class="modal-heading"><div><p class="eyebrow">ARCHIVE PLAN</p><h3>Remove {{ plan.name }}?</h3></div><button class="modal-close" type="button" data-modal-close>Close</button></div><p class="modal-copy">This hides the plan from new customers while keeping historical transactions intact.</p><form method="post" action="{{ url_for('delete_plan', plan_id=plan.id) }}" class="modal-actions"><button class="button secondary" type="button" data-modal-close>Keep plan</button><button class="button danger-fill" type="submit">Archive plan</button></form></div></div>{% endfor %}<div class="admin-modal" id="create-plan-modal" aria-hidden="true"><div class="modal-card"><div class="modal-heading"><div><p class="eyebrow">NEW ACCESS PLAN</p><h3>Create a pricing offer</h3></div><button class="modal-close" type="button" data-modal-close>Close</button></div><form method="post" action="{{ url_for('create_plan') }}" class="modal-form"><div class="modal-form-grid"><label>Plan name<input name="name" placeholder="Weekend promo" required></label><label>Coin denomination<input name="denomination" type="number" min="0.01" step="0.01" placeholder="10" required></label><label>Base minutes<input name="minutes" type="number" min="1" placeholder="180" required></label><label>Bonus minutes<input name="bonus_minutes" type="number" min="0" placeholder="30"></label><label>Cap mode<select name="cap_type"><option value="time">Time capped</option><option value="data">Data capped</option></select></label><label>Data limit (MB)<input name="data_limit_mb" type="number" min="1" placeholder="Optional"></label></div><p class="modal-help">Data limits are required when Data capped is selected.</p><div class="modal-actions"><button class="button secondary" type="button" data-modal-close>Cancel</button><button class="button" type="submit">Create plan</button></div></form></div></div></section>
+      <section class="vouchers-layout page-section" data-page="vouchers" id="vouchers"><div class="voucher-topline"><div><p class="eyebrow">VOUCHER OPERATIONS</p><h2>Issue access codes with confidence.</h2><p class="muted">Create a batch, print the codes, and keep an eye on what has been redeemed.</p></div><span class="panel-note">LOCAL INVENTORY / LIVE</span></div><div class="voucher-workspace"><div class="panel voucher-builder"><div class="panel-heading"><div><p class="eyebrow">01 / GENERATE</p><h3>New voucher batch</h3></div><span class="step-badge">READY</span></div><form method="post" action="{{ url_for('create_vouchers') }}" class="voucher-form-grid"><label>Batch size<span class="field-help">Up to 500 codes</span><input name="count" type="number" value="50" min="1" max="500"></label><label>Access minutes<span class="field-help">Time per voucher</span><input name="minutes" type="number" value="60" min="1"></label><label>Expiry window<span class="field-help">Days after issue</span><input name="expires_days" type="number" value="30" min="1"></label><button class="button" type="submit">Generate codes <span>-&gt;</span></button></form><div class="batch-preview"><span class="preview-icon">A7</span><div><strong>Print-ready format</strong><small>8-character codes / one-time use</small></div></div></div><div class="voucher-stat-grid"><div class="voucher-stat"><span>Available</span><strong>{{ voucher_counts.get('unused', 0) }}</strong><small>Ready to sell</small></div><div class="voucher-stat used-stat"><span>Redeemed</span><strong>{{ voucher_counts.get('used', 0) }}</strong><small>Already activated</small></div><div class="voucher-stat expired-stat"><span>Expired</span><strong>{{ voucher_counts.get('expired', 0) }}</strong><small>Needs cleanup</small></div></div></div><div class="panel inventory-panel"><div class="inventory-toolbar"><div><p class="eyebrow">02 / INVENTORY</p><h3>Recent voucher codes</h3></div><div class="inventory-tools"><input id="voucher-search" type="search" placeholder="Search code or MAC"><select id="voucher-status"><option value="all">All statuses</option><option value="unused">Unused</option><option value="used">Used</option><option value="expired">Expired</option></select><button class="button secondary" id="print-vouchers" type="button">Print list</button></div></div><div class="table-wrap"><table class="voucher-table"><thead><tr><th>Code</th><th>Credit</th><th>Status</th><th>Redeemed by</th><th>Expires</th><th></th></tr></thead><tbody id="voucher-rows">{% for voucher in vouchers %}<tr data-status="{{ voucher.status }}" data-search="{{ voucher.code }} {{ voucher.mac_address or '' }}"><td><code>{{ voucher.code }}</code></td><td>{{ voucher.minutes }} min</td><td><span class="tag {{ voucher.status }}">{{ voucher.status }}</span></td><td>{{ voucher.mac_address or 'Not redeemed' }}</td><td>{{ voucher.expires_at[:10] if voucher.expires_at else '-' }}</td><td><button class="icon-action copy-voucher" type="button" data-code="{{ voucher.code }}" title="Copy voucher code">Copy</button></td></tr>{% else %}<tr><td colspan="6" class="empty-state">No vouchers generated yet.</td></tr>{% endfor %}</tbody></table></div></div></section>
+{% macro client_row(client) %}
+<tr class="client-row" data-session-id="{{ client.id }}" data-state="{{ 'finished' if client.finished else client.status }}" data-status="{{ client.status }}" data-attention="{{ '1' if client.attention else '0' }}" data-device="{{ client.device }}" data-search="{{ client.search }}">
+  <td>
+    <div class="client-cell">
+      <div class="client-flags">
+        <span class="client-chip {{ client.status_class }}" data-field="status">{{ client.status_label }}</span>
+        <span class="client-chip warn" data-field="idle" {% if not client.idle %}hidden{% endif %}>Idle</span>
+      </div>
+      <strong data-field="device">{{ client.device }}</strong>
+      <small class="table-sub" data-field="where">{{ client.ip_address or 'no IP yet' }} &middot; seen {{ client.seen_label }}</small>
+    </div>
+  </td>
+  <td>
+    <div class="client-cell">
+      <span class="client-chip muted" data-field="source-kind">{{ client.source_kind }}</span>
+      <strong data-field="source">{{ client.source_label }}</strong>
+      <small class="table-sub" data-field="granted">{{ client.granted_minutes }} min granted</small>
+    </div>
+  </td>
+  <td class="credit">
+    <div class="client-cell">
+      <strong data-field="minutes-left">{{ client.minutes_left }} min</strong>
+      <small class="table-sub" data-field="ends">{{ 'ends ' ~ client.ends_clock if client.ends_clock else ('clock paused, time banked' if client.status == 'paused' else 'no clock running') }}</small>
+      <span class="time-bar"><i data-field="bar" class="{{ client.urgency }}" style="width:{{ client.progress_percent if client.progress_percent is not none else 0 }}%"></i></span>
+    </div>
+  </td>
+  <td>
+    <div class="client-cell">
+      <strong data-field="traffic-total">{{ client.data_total }}</strong>
+      <small class="table-sub">down <span data-field="traffic-down">{{ client.data_down }}</span> / up <span data-field="traffic-up">{{ client.data_up }}</span></small>
+    </div>
+  </td>
+  <td>
+    <div class="client-cell">
+      <strong data-field="speed">{{ client.speed }}</strong>
+      <small class="table-sub">started <span data-field="started">{{ client.started_clock }}</span></small>
+    </div>
+  </td>
+  <td class="actions client-actions">
+    {% for step in extend_choices %}
+    <form method="post" action="{{ url_for('session_action', session_id=client.id, action='extend') }}" data-action="extend" data-when="live" data-action-label="Extend by {{ step }} minutes" data-modal-target="{{ client.device }} &middot; {{ client.status_label }} &middot; {{ client.minutes_left }} min left" data-modal-hint="Adding {{ step }} minutes pushes the end time forward.">
+      <input type="hidden" name="minutes" value="{{ step }}">
+      <button type="submit" title="Extend this client by {{ step }} minutes">+{{ step }}</button>
+    </form>
+    {% endfor %}
+    <form method="post" action="{{ url_for('session_action', session_id=client.id, action='pause') }}" data-action="pause" data-when="active" data-action-label="Pause this client's clock" data-modal-target="{{ client.device }} &middot; {{ client.minutes_left }} min left" data-modal-hint="Pausing banks the remaining minutes so none of them run down while the client is away.">
+      <button type="submit" title="Bank the remaining time and stop the countdown">Pause</button>
+    </form>
+    <form method="post" action="{{ url_for('session_action', session_id=client.id, action='resume') }}" data-action="resume" data-when="paused" data-action-label="Resume this client's clock" data-modal-target="{{ client.device }} &middot; {{ client.status_label }} &middot; {{ client.minutes_left }} min banked" data-modal-hint="Resuming starts the countdown again from here.">
+      <button type="submit" title="Start the countdown again with the banked minutes">Resume</button>
+    </form>
+    <form method="post" action="{{ url_for('session_action', session_id=client.id, action='kick') }}" data-action="kick" data-when="live" data-action-label="Kick this device" data-modal-target="{{ client.device }} &middot; {{ client.minutes_left }} min left" data-modal-hint="Kicking ends the session and, on a live router, drops the device off the hotspot now.">
+      <button class="danger" type="submit" title="End the session and disconnect">Kick</button>
+    </form>
+    <form method="post" action="{{ url_for('session_action', session_id=client.id, action='clear') }}" data-action="clear" data-when="finished" data-action-label="Clear this finished row" data-modal-target="{{ client.device }} &middot; {{ client.status_label }}" data-modal-hint="Clearing removes the row from this list; the audit log keeps the record.">
+      <button type="submit" title="Remove this finished row from the list">Clear</button>
+    </form>
+  </td>
+</tr>
+{% endmacro %}
+
+      <section class="panel clients-panel" id="clients" data-clients-api="{{ url_for('admin_sessions_api') }}" data-poll-seconds="10">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">CLIENT CONTROL</p>
+            <h2>Connected devices</h2>
+            <p class="muted">One row per device that bought time: what it paid with, how much of that time is left, and the shortcuts to help it, hold it, or stop it. The list refreshes itself, so a device that pays appears here without a reload and finished rows stay until you clear them.</p>
+          </div>
+          <span class="panel-note"><span class="live-chip">LIVE</span> <span data-client-note>{{ client_summary.active }} active / {{ client_summary.total }} rows</span> &middot; updated <span data-clients-updated>just now</span></span>
+        </div>
+        <div class="client-stat-grid">
+          <div class="client-stat"><span>Active now</span><strong data-stat="active">{{ client_summary.active }}</strong><small>{{ client_summary.paused }} paused / {{ client_summary.finished }} finished</small></div>
+          <div class="client-stat"><span>Time left</span><strong data-stat="minutes_left">{{ client_summary.minutes_left }}</strong><small>Minutes across live devices</small></div>
+          <div class="client-stat"><span>Traffic on this list</span><strong data-stat="traffic">{{ client_summary.traffic }}</strong><small>Down + up since each session started</small></div>
+          <div class="client-stat attention-stat"><span>Needs attention</span><strong data-stat="attention">{{ client_summary.attention }}</strong><small>{{ client_summary.idle }} idle {{ idle_seconds // 60 }}+ min / under 5 min left</small></div>
+        </div>
+        <div class="client-toolbar">
+          <input id="client-search" type="search" placeholder="Search MAC, IP, status or what they paid for" aria-label="Search devices">
+          <select id="client-status" aria-label="Filter devices by status">
+            <option value="all">All devices</option>
+            <option value="active">Active only</option>
+            <option value="attention">Needs attention</option>
+            <option value="paused">Paused</option>
+            <option value="finished">Finished</option>
+          </select>
+          <button class="button secondary" type="button" data-clients-refresh>Refresh now</button>
+          <form method="post" action="{{ url_for('clear_finished_sessions') }}" data-action="clear-finished" data-action-label="Clear finished devices" data-modal-target="{{ client_summary.finished }} finished row(s)" data-modal-hint="Clearing removes those rows from this list. The audit log keeps the record, and live devices are never touched.">
+            <button class="danger" type="submit">Clear finished</button>
+          </form>
+        </div>
+        <div class="table-wrap">
+          <table class="clients-table">
+            <thead><tr><th>Device</th><th>Paid for</th><th>Time left</th><th>Traffic</th><th>Session</th><th>Actions</th></tr></thead>
+            <tbody id="client-rows">
+              {% for client in clients %}{{ client_row(client) }}{% endfor %}
+              <tr class="client-empty" id="client-empty" {% if clients %}hidden{% endif %}><td colspan="6" class="empty-state">No devices on the list yet. A row appears by itself the moment a client pays by coin, redeems a voucher, or gets time from the console.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="client-legend"><b>Reading a row:</b> <b>Device</b> is the MAC the hotspot knows, with the IP and how long ago the console last heard from it. <b>Paid for</b> lists the credits that built the session, newest last. <b>Time left</b> counts the real clock down to the end time, and the bar shows how much of the granted time is still unspent. <b>Idle</b> means the device has been quiet for {{ idle_seconds // 60 }} minutes or more while its clock runs. <b>Pause</b> banks the remaining minutes so none are lost, <b>Resume</b> puts them back on the clock, and <b>Kick</b> ends the session and drops the device off a live hotspot.</p>
+        <template id="client-row-shell">{{ client_row(client_shell) }}</template>
+      </section>
+
+      <section class="two-column" id="settings"><div class="panel"><div class="panel-heading"><div><p class="eyebrow">NETWORK &amp; VENDO</p><h2>Machine settings</h2></div></div><form method="post" action="{{ url_for('update_system_settings') }}" class="stack-form"><label>SSID<input name="ssid" value="{{ ssid }}" required></label><label>Session accounting<select name="session_mode"><option value="time" {% if session_mode == 'time' %}selected{% endif %}>Time capped</option><option value="data" {% if session_mode == 'data' %}selected{% endif %}>Data capped</option></select></label><label>Coin pulse tolerance (ms)<input name="pulse_tolerance" type="number" value="{{ pulse_tolerance }}" min="10" max="500"></label><label>Auto-settle coin total after (seconds)<span class="field-help">0 keeps the operator pressing Finish</span><input name="auto_settle" type="number" value="{{ auto_settle_seconds }}" min="0" max="300"></label><label class="check-label"><input name="mac_voucher_mode" type="checkbox" {% if mac_voucher_mode == '1' %}checked{% endif %}> MAC as voucher mode</label><button class="button" type="submit">Save settings</button></form></div><div class="panel"><div class="panel-heading"><div><p class="eyebrow">SYSTEM ACTIONS</p><h2>Remote controls</h2></div></div><div class="action-grid"><form method="post" action="{{ url_for('system_action', action='restart-service') }}"><button class="button secondary" type="submit">Restart service</button></form><form method="post" action="{{ url_for('system_action', action='restart-network') }}"><button class="button secondary" type="submit">Restart network</button></form><form method="post" action="{{ url_for('system_action', action='reboot') }}"><button class="button secondary" type="submit">Reboot Pi</button></form><form method="post" action="{{ url_for('system_action', action='shutdown') }}"><button class="button danger-fill" type="submit">Shutdown</button></form></div><p class="adapter-note">Actions are recorded but not executed until the system adapter is enabled.</p></div></section>
+      <section class="panel security-panel"><div class="panel-heading"><div><p class="eyebrow">SECURITY</p><h2>Admin account</h2></div></div><form method="post" action="{{ url_for('update_admin') }}" class="inline-form"><input name="username" value="admin" placeholder="Username" required><input name="password" type="password" placeholder="New password (6+ chars)" minlength="6" required><button class="button" type="submit">Update credentials</button></form></section>
+      <section class="panel" id="logs"><div class="panel-heading"><div><p class="eyebrow">AUDIT TRAIL</p><h2>Sales and system logs</h2></div></div><div class="table-wrap"><table><thead><tr><th>Time</th><th>Level</th><th>Category</th><th>Message</th></tr></thead><tbody>{% for log in logs %}<tr><td>{{ log.created_at }}</td><td><span class="tag {{ log.level }}">{{ log.level }}</span></td><td>{{ log.category }}</td><td>{{ log.message }}</td></tr>{% else %}<tr><td colspan="4" class="empty-state">No system events yet.</td></tr>{% endfor %}</tbody></table></div></section>
+      <section class="panel simulation-panel"><div class="panel-heading"><div><p class="eyebrow">DEVELOPMENT CONTROL</p><h2>Simulate a coin pulse</h2></div></div><form method="post" action="{{ url_for('simulate_coin') }}" class="inline-form"><input name="amount" type="number" value="1" min="0.01" step="0.01" required><button class="button" type="submit">Insert simulated coin</button></form></section>
+      <div class="coin-queue-panel" data-page="clients" id="coin-queue" data-coin-requests-api="{{ url_for('admin_coin_requests_api') }}" data-poll-seconds="2" data-auto-settle-seconds="{{ auto_settle_seconds }}"><div class="panel-heading"><div><p class="eyebrow">COIN ACCEPTOR SIMULATOR</p><h2>Pending client coin requests</h2><p class="muted">Only one client can hold the coin acceptor at a time. The simulator pops up by itself when a client presses Insert coin, then insert each physical coin and finish &mdash; the client is credited from the whole amount at the coin rates the plan rows set. Real acceptor coins land on the same request{% if auto_settle_seconds %}, and the total settles itself {{ auto_settle_seconds }} seconds after the last coin, so no click is needed{% else %}; press Finish to settle the total{% endif %}.</p></div><span class="panel-note"><span class="live-chip">LIVE</span> <span data-queue-count>0</span> waiting</span></div><div class="coin-request-list" id="coin-request-list" hidden></div><div class="empty-state" id="coin-request-empty">No client coin requests are waiting. Keep this console open &mdash; the simulator opens automatically.</div></div>
+      <div class="admin-modal" id="coin-simulator" aria-hidden="true"><div class="modal-card coin-simulator-modal"><div class="modal-heading"><div><p class="eyebrow">ALLAN COINSLOT 1239 / SIMULATOR</p><h3>Insert coins for <span data-sim-device>the client</span></h3></div><button class="modal-close" type="button" data-modal-close>Close</button></div><div class="coin-sim-total"><span>Client credit</span><strong>P<span data-sim-amount>0</span> / <span data-sim-minutes>0</span> min</strong><small><span data-sim-count>0</span> coins accepted</small><em class="coin-sim-reward" data-sim-reward>No coins inserted yet.</em></div><div class="coin-denominations" data-coin-denominations></div><p class="coin-sim-status" data-sim-status>Waiting for the first coin&hellip;</p><button class="button complete-coin-button" type="button" data-complete-coin>Finish / accept coins</button></div></div>
+    </main>
+  </div>
+  <script>
+    (() => {
+      const links = [...document.querySelectorAll('.nav-link[href^="#"]')];
+      const sections = [...document.querySelectorAll('main > section')];
+      const coinQueue = document.querySelector('.coin-queue-panel');
+      const groups = { overview: [0, 1, 8], pricing: [2], vouchers: [3], clients: [4], hardware: [1], settings: [5, 6], logs: [7] };
+      const showView = (view) => {
+        const selected = groups[view] ? view : 'overview';
+        sections.forEach((section, index) => { section.style.display = groups[selected].includes(index) ? '' : 'none'; });
+        if (coinQueue) coinQueue.style.display = selected === 'clients' ? '' : 'none';
+        links.forEach((link) => link.classList.toggle('active', link.getAttribute('href') === `#${selected}`));
+        history.replaceState(null, '', `#${selected}`);
+      };
+      links.forEach((link) => link.addEventListener('click', (event) => { event.preventDefault(); showView(link.getAttribute('href').slice(1)); }));
+      showView(location.hash.slice(1) || 'overview');
+    })();
+  </script>
+  <script>
+    (() => {
+      const search = document.getElementById('voucher-search');
+      const status = document.getElementById('voucher-status');
+      const rows = [...document.querySelectorAll('#voucher-rows tr[data-status]')];
+      const filterRows = () => {
+        const query = (search.value || '').toLowerCase();
+        rows.forEach((row) => { row.hidden = (status.value !== 'all' && row.dataset.status !== status.value) || !row.dataset.search.toLowerCase().includes(query); });
+      };
+      search?.addEventListener('input', filterRows);
+      status?.addEventListener('change', filterRows);
+      document.querySelectorAll('.copy-voucher').forEach((button) => button.addEventListener('click', async () => { await navigator.clipboard.writeText(button.dataset.code); button.textContent = 'Copied'; setTimeout(() => { button.textContent = 'Copy'; }, 1200); }));
+      document.getElementById('print-vouchers')?.addEventListener('click', () => window.print());
+    })();
+  </script>
+  <script>
+    (() => {
+      const openModal = (modal) => { if (!modal) return; modal.classList.add('is-open'); modal.setAttribute('aria-hidden', 'false'); document.body.classList.add('body-modal-open'); };
+      const closeModal = (modal) => { if (!modal) return; modal.classList.remove('is-open'); modal.setAttribute('aria-hidden', 'true'); document.body.classList.remove('body-modal-open'); };
+      const createModal = (form, label, hint) => {
+        const modal = document.createElement('div');
+        const modalId = `form-modal-${Math.random().toString(36).slice(2)}`;
+        modal.className = 'admin-modal'; modal.id = modalId; modal.setAttribute('aria-hidden', 'true');
+        const card = document.createElement('div'); card.className = 'modal-card';
+        const heading = document.createElement('div'); heading.className = 'modal-heading';
+        const title = document.createElement('div');
+        const eyebrow = document.createElement('p'); eyebrow.className = 'eyebrow'; eyebrow.textContent = 'ADMIN ACTION';
+        const labelNode = document.createElement('h3'); labelNode.textContent = label;
+        const close = document.createElement('button'); close.type = 'button'; close.className = 'modal-close'; close.setAttribute('data-modal-close', ''); close.textContent = 'Close';
+        title.append(eyebrow, labelNode); heading.append(title, close); card.append(heading);
+        if (hint) { const hintNode = document.createElement('p'); hintNode.className = 'modal-hint'; hintNode.textContent = hint; card.append(hintNode); }
+        form.classList.remove('inline-form'); form.classList.add('modal-form'); card.append(form); modal.append(card); document.body.append(modal);
+        return { modal, modalId };
+      };
+      const bindLaunchers = (root) => {
+        root.querySelectorAll('[data-modal-open]').forEach((button) => {
+          if (button.dataset.modalBound) return;
+          button.dataset.modalBound = '1';
+          button.addEventListener('click', () => openModal(document.getElementById(button.dataset.modalOpen)));
+        });
+      };
+      // Every form in main becomes a confirm modal behind a compact launcher button, so nothing acts on a single click.
+      // Rows the console builds later (a device that appears while the operator watches) reuse the same helper.
+      const wrapForms = (root) => {
+        root.querySelectorAll('form').forEach((form) => {
+          if (form.closest('.admin-modal')) return;
+          const submit = form.querySelector('button[type="submit"]');
+          if (!submit) return;
+          const buttonText = submit.textContent.trim().replace(/\s+/g, ' ') || 'Open';
+          const label = (form.dataset.actionLabel || buttonText).trim();
+          const placeholder = document.createElement('span'); placeholder.hidden = true; form.parentNode.replaceChild(placeholder, form);
+          const target = form.dataset.modalTarget || '';
+          const note = form.dataset.modalHint || '';
+          const { modal, modalId } = createModal(form, label, [target, note].filter(Boolean).join(' \u2014 '));
+          const launch = document.createElement('button'); launch.type = 'button'; launch.className = 'modal-launch'; launch.textContent = buttonText;
+          launch.setAttribute('data-modal-open', modalId); launch.dataset.modalBound = '1';
+          if (form.dataset.when) launch.dataset.when = form.dataset.when;
+          if (form.dataset.action) launch.dataset.action = form.dataset.action;
+          if (form.dataset.actionLabel) launch.title = form.dataset.actionLabel;
+          if (submit.classList.contains('danger') || submit.classList.contains('danger-fill')) launch.classList.add('danger');
+          launch.addEventListener('click', () => openModal(document.getElementById(launch.dataset.modalOpen)));
+          placeholder.replaceWith(launch);
+        });
+        bindLaunchers(root);
+      };
+      window.PisoAdminForms = { wrap: wrapForms, open: openModal };
+      wrapForms(document.querySelector('main'));
+      document.addEventListener('click', (event) => { const close = event.target.closest('[data-modal-close]'); if (close) closeModal(close.closest('.admin-modal')); if (event.target.classList.contains('admin-modal')) closeModal(event.target); });
+      document.addEventListener('keydown', (event) => { if (event.key === 'Escape') document.querySelectorAll('.admin-modal.is-open').forEach(closeModal); });
+    })();
+  </script>
+  <script src="{{ url_for('static', filename='sound.js') }}"></script>
+  <script src="{{ url_for('static', filename='net-status.js') }}"></script>
+  <script>
+    window.PISO_COIN_QUEUE = {{ coin_requests|tojson }};
+    window.PISO_COIN_OPTIONS = {{ coin_options|tojson }};
+  </script>
+  <script>
+    (() => {
+      const panel = document.getElementById('coin-queue');
+      if (!panel) return;
+      const list = document.getElementById('coin-request-list');
+      const empty = document.getElementById('coin-request-empty');
+      const modal = document.getElementById('coin-simulator');
+      const countLabel = panel.querySelector('[data-queue-count]');
+      const denominations = modal.querySelector('[data-coin-denominations]');
+      const deviceLabel = modal.querySelector('[data-sim-device]');
+      const amountLabel = modal.querySelector('[data-sim-amount]');
+      const minutesLabel = modal.querySelector('[data-sim-minutes]');
+      const coinLabel = modal.querySelector('[data-sim-count]');
+      const rewardLabel = modal.querySelector('[data-sim-reward]');
+      const statusLabel = modal.querySelector('[data-sim-status]');
+      const completeButton = modal.querySelector('[data-complete-coin]');
+      const apiUrl = panel.dataset.coinRequestsApi || '/api/admin/coin-requests';
+      const pollMs = Math.max(1, Number(panel.dataset.pollSeconds || 2)) * 1000;
+      const autoSettleSeconds = Math.max(0, Number(panel.dataset.autoSettleSeconds || 0));
+      const options = Array.isArray(window.PISO_COIN_OPTIONS) ? window.PISO_COIN_OPTIONS : [];
+      const queue = new Map();
+      const dismissed = new Set();
+      let activeId = null;
+      let sending = false;
+      let busy = false;
+      const setStatus = (message) => { statusLabel.textContent = message; };
+      const beep = (name, options) => { if (window.PisoSound) window.PisoSound.play(name, options); };
+      const hold = (state) => { busy = state; completeButton.disabled = state; denominations.querySelectorAll('button').forEach((button) => { button.disabled = state; }); };
+      options.forEach((option) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.coinAmount = String(option.amount);
+        const value = document.createElement('strong');
+        value.textContent = `P${option.amount}`;
+        const credit = document.createElement('span');
+        credit.textContent = `+${option.minutes} min`;
+        button.append(value, credit);
+        denominations.append(button);
+      });
+      const renderModal = (request) => {
+        deviceLabel.textContent = request.device_id;
+        amountLabel.textContent = Number(request.amount).toFixed(0);
+        minutesLabel.textContent = request.minutes;
+        coinLabel.textContent = request.coin_count;
+        const mix = request.reward ? request.reward.summary : '';
+        rewardLabel.textContent = request.coin_count
+          ? `Total P${Number(request.amount).toFixed(0)} buys ${mix || `${request.minutes} minutes`}.`
+          : 'No coins inserted yet. The whole amount is paid at the plan prices it reaches when you finish.';
+      };
+      const renderQueue = () => {
+        const open = [...queue.values()];
+        countLabel.textContent = open.length;
+        empty.hidden = open.length > 0;
+        list.hidden = open.length === 0;
+        list.replaceChildren(...open.map((request) => {
+          const row = document.createElement('div');
+          row.className = 'coin-request-row';
+          const info = document.createElement('div');
+          const name = document.createElement('strong');
+          name.textContent = `Client ${request.device_id}`;
+          const stats = document.createElement('small');
+          const opened = String(request.created_at || '').slice(11, 19);
+          const mix = request.coin_count && request.reward ? ` / ${request.reward.summary}` : '';
+          const last = request.last_coin_at ? ` / last coin ${String(request.last_coin_at).slice(11, 19)}` : '';
+          stats.textContent = `${request.coin_count} coins / P${Number(request.amount).toFixed(0)} / ${request.minutes} min${mix}${last}${opened ? ` / opened ${opened}` : ''}`;
+          const action = document.createElement('button');
+          action.type = 'button';
+          action.className = 'button';
+          action.textContent = activeId === request.id ? 'Simulator open' : 'Simulate coins';
+          action.addEventListener('click', () => openSimulator(queue.get(request.id)));
+          info.append(name, stats);
+          row.append(info, action);
+          return row;
+        }));
+      };
+      const openSimulator = (request) => {
+        if (!request) return;
+        activeId = request.id;
+        dismissed.delete(request.id);
+        renderModal(request);
+        setStatus(request.coin_count > 0 ? (autoSettleSeconds > 0 ? `P${Number(request.amount).toFixed(0)} counted. This total settles itself ${autoSettleSeconds}s after the last coin.` : 'Insert the next coin, or finish to credit the client.') : 'Waiting for the first coin\u2026');
+        modal.classList.add('is-open');
+        modal.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('body-modal-open');
+        beep('request');
+        renderQueue();
+      };
+      const closeSimulator = () => { modal.classList.remove('is-open'); modal.setAttribute('aria-hidden', 'true'); document.body.classList.remove('body-modal-open'); };
+      const applyQueue = (data) => {
+        queue.clear();
+        (data.requests || []).forEach((request) => queue.set(request.id, request));
+        if (activeId !== null) {
+          if (queue.has(activeId)) renderModal(queue.get(activeId));
+          else {
+            const finished = activeId;
+            dismissed.add(finished);
+            setStatus('Coins accepted. Activating the client session\u2026');
+            setTimeout(() => { if (activeId === finished) { activeId = null; closeSimulator(); renderQueue(); } }, 800);
+          }
+        }
+        renderQueue();
+        if (activeId === null && !modal.classList.contains('is-open')) {
+          const next = [...queue.values()].find((request) => !dismissed.has(request.id));
+          if (next) openSimulator(next);
+        }
+      };
+      // events
+      const loadQueue = async () => {
+        const response = await fetch(apiUrl, { cache: 'no-store', headers: { Accept: 'application/json' } });
+        if (response.redirected) { location.reload(); return null; }
+        if (!response.ok) return null;
+        return response.json();
+      };
+      const refresh = async (force = false) => {
+        if (busy && !force) return;
+        try {
+          const data = await loadQueue();
+          if (data) applyQueue(data);
+        } catch (error) {
+          // Keep polling through short backend hiccups.
+        }
+      };
+      const insertCoin = async (amount) => {
+        const requestId = activeId;
+        if (requestId === null || sending || busy) return;
+        sending = true;
+        hold(true);
+        setStatus(`Inserting P${amount}\u2026`);
+        try {
+          const response = await fetch(`/coin-requests/${requestId}/insert`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ amount }) });
+          if (response.redirected) { location.reload(); return; }
+          const data = await response.json();
+          if (!response.ok) { setStatus(data.error || 'That coin was rejected.'); beep('error'); await refresh(true); return; }
+          const request = queue.get(data.id);
+          if (request) { Object.assign(request, data); renderModal(request); }
+          beep('coin', { amount });
+          setStatus(`Accepted P${amount}. Total P${Number(data.amount).toFixed(0)} now buys ${data.reward ? data.reward.summary : `${data.minutes} min`} = ${data.minutes} minutes.`);
+          await refresh(true);
+        } catch (error) {
+          setStatus('Connection lost. Insert the coin again.');
+        } finally {
+          sending = false;
+          hold(false);
+        }
+      };
+      const finishCoins = async () => {
+        const requestId = activeId;
+        if (requestId === null || sending || busy) return;
+        sending = true;
+        hold(true);
+        setStatus('Settling the total at the plan prices and closing the request\u2026');
+        try {
+          const response = await fetch(`/coin-requests/${requestId}/complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+          if (response.redirected) { location.reload(); return; }
+          const data = await response.json();
+          if (!response.ok) { setStatus(data.error || 'Insert at least one coin first.'); beep('error'); return; }
+          dismissed.add(requestId);
+          activeId = null;
+          closeSimulator();
+          beep('success');
+          await refresh(true);
+        } catch (error) {
+          setStatus('Connection lost. Try finishing again.');
+        } finally {
+          sending = false;
+          hold(false);
+        }
+      };
+      denominations.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-coin-amount]');
+        if (button) insertCoin(Number(button.dataset.coinAmount));
+      });
+      completeButton.addEventListener('click', finishCoins);
+      new MutationObserver(() => {
+        if (modal.classList.contains('is-open') || activeId === null) return;
+        dismissed.add(activeId);
+        activeId = null;
+        renderQueue();
+      }).observe(modal, { attributes: true, attributeFilter: ['class'] });
+      (Array.isArray(window.PISO_COIN_QUEUE) ? window.PISO_COIN_QUEUE : []).forEach((request) => queue.set(request.id, request));
+      renderQueue();
+      refresh(true);
+      setInterval(refresh, pollMs);
+    })();
+  </script>
+  <script>
+    window.PISO_SESSIONS = {{ clients|tojson }};
+    window.PISO_CLIENT_SUMMARY = {{ client_summary|tojson }};
+  </script>
+  <script>
+    (() => {
+      const section = document.getElementById('clients');
+      if (!section) return;
+      const tbody = document.getElementById('client-rows');
+      const empty = document.getElementById('client-empty');
+      const search = document.getElementById('client-search');
+      const statusFilter = document.getElementById('client-status');
+      const shell = document.getElementById('client-row-shell');
+      const stamp = section.querySelector('[data-clients-updated]');
+      const note = section.querySelector('[data-client-note]');
+      const apiUrl = section.dataset.clientsApi || '/api/admin/sessions';
+      const pollMs = Math.max(2, Number(section.dataset.pollSeconds || 10)) * 1000;
+      const stats = {};
+      section.querySelectorAll('[data-stat]').forEach((node) => { stats[node.dataset.stat] = node; });
+      let busy = false;
+
+      const setField = (scope, field, value) => {
+        const node = scope.querySelector(`[data-field="${field}"]`);
+        if (node) node.textContent = value;
+      };
+
+      // One painter for every row, so a device that shows up mid-view looks exactly like a server-rendered one.
+      const fillRow = (row, client) => {
+        row.dataset.sessionId = client.id;
+        row.dataset.state = client.finished ? 'finished' : client.status;
+        row.dataset.status = client.status;
+        row.dataset.attention = client.attention ? '1' : '0';
+        row.dataset.device = client.device;
+        row.dataset.search = client.search;
+        const status = row.querySelector('[data-field="status"]');
+        if (status) { status.textContent = client.status_label; status.className = `client-chip ${client.status_class}`; }
+        const idle = row.querySelector('[data-field="idle"]');
+        if (idle) idle.hidden = !client.idle;
+        setField(row, 'device', client.device);
+        setField(row, 'where', `${client.ip_address || 'no IP yet'} \u00b7 seen ${client.seen_label}`);
+        setField(row, 'source-kind', client.source_kind);
+        setField(row, 'source', client.source_label);
+        setField(row, 'granted', `${client.granted_minutes} min granted`);
+        setField(row, 'minutes-left', `${client.minutes_left} min`);
+        setField(row, 'ends', client.ends_clock ? `ends ${client.ends_clock}` : (client.status === 'paused' ? 'clock paused, time banked' : 'no clock running'));
+        const bar = row.querySelector('[data-field="bar"]');
+        if (bar) { bar.className = client.urgency; bar.style.width = `${client.progress_percent || 0}%`; }
+        setField(row, 'traffic-total', client.data_total);
+        setField(row, 'traffic-down', client.data_down);
+        setField(row, 'traffic-up', client.data_up);
+        setField(row, 'speed', client.speed);
+        setField(row, 'started', client.started_clock);
+      };
+
+      // The action forms of one row, whether they are still in the cell or already moved into their confirm modals.
+      const syncActions = (row, client) => {
+        const forms = new Set([...row.querySelectorAll('form[data-action]')]);
+        row.querySelectorAll('[data-modal-open]').forEach((launcher) => {
+          const modal = document.getElementById(launcher.dataset.modalOpen);
+          if (modal) modal.querySelectorAll('form[data-action]').forEach((form) => forms.add(form));
+        });
+        forms.forEach((form) => {
+          form.action = `/sessions/${client.id}/${form.dataset.action}`;
+          form.dataset.modalTarget = `${client.device} \u00b7 ${client.status_label} \u00b7 ${client.minutes_left} min left`;
+        });
+      };
+
+      const createRow = (client) => {
+        const row = shell.content.firstElementChild.cloneNode(true);
+        fillRow(row, client);
+        syncActions(row, client);
+        if (window.PisoAdminForms) window.PisoAdminForms.wrap(row);
+        return row;
+      };
+
+      const passesFilter = (row) => {
+        const mode = statusFilter ? statusFilter.value : 'all';
+        if (mode === 'attention' && row.dataset.attention !== '1') return false;
+        if (mode === 'finished' && row.dataset.state !== 'finished') return false;
+        if (mode !== 'all' && mode !== 'attention' && mode !== 'finished' && row.dataset.status !== mode) return false;
+        const query = (search && search.value ? search.value : '').trim().toLowerCase();
+        return !query || (row.dataset.search || '').includes(query);
+      };
+      const applyFilter = () => {
+        let shown = 0;
+        tbody.querySelectorAll('tr.client-row').forEach((row) => { row.hidden = !passesFilter(row); if (!row.hidden) shown += 1; });
+        empty.hidden = shown > 0;
+      };
+      const applySummary = (summary) => {
+        if (!summary) return;
+        ['active', 'minutes_left', 'traffic', 'attention'].forEach((key) => { if (stats[key]) stats[key].textContent = summary[key]; });
+        note.textContent = `${summary.active} active / ${summary.total} rows`;
+        const clearButton = section.querySelector('[data-action="clear-finished"]');
+        if (clearButton) clearButton.hidden = !summary.finished;
+      };
+      const paint = (data) => {
+        const list = Array.isArray(data.sessions) ? data.sessions : [];
+        const seen = new Set();
+        list.forEach((client) => {
+          seen.add(String(client.id));
+          let row = tbody.querySelector(`tr[data-session-id="${client.id}"]`);
+          if (row) {
+            fillRow(row, client);
+            syncActions(row, client);
+          } else {
+            row = createRow(client);
+          }
+          // Payload order is the display order: soonest to expire on top, finished devices at the bottom.
+          tbody.insertBefore(row, empty);
+        });
+        tbody.querySelectorAll('tr.client-row').forEach((row) => { if (!seen.has(row.dataset.sessionId)) row.remove(); });
+        applySummary(data.summary);
+        stamp.textContent = data.updated_at || 'just now';
+        applyFilter();
+      };
+      const refresh = async (force = false) => {
+        if (busy) return;
+        // Nothing to do while the operator is looking at another view or another tab.
+        if (!force && (document.hidden || section.offsetParent === null)) return;
+        busy = true;
+        try {
+          const response = await fetch(apiUrl, { cache: 'no-store', headers: { Accept: 'application/json' } });
+          if (response.redirected || response.status === 401) { location.reload(); return; }
+          if (response.ok) paint(await response.json());
+        } catch (error) {
+          stamp.textContent = 'reconnecting\u2026';
+        } finally {
+          busy = false;
+        }
+      };
+      search?.addEventListener('input', applyFilter);
+      statusFilter?.addEventListener('change', applyFilter);
+      section.querySelector('[data-clients-refresh]')?.addEventListener('click', () => refresh(true));
+      applySummary(window.PISO_CLIENT_SUMMARY);
+      paint({ sessions: Array.isArray(window.PISO_SESSIONS) ? window.PISO_SESSIONS : [], summary: window.PISO_CLIENT_SUMMARY, updated_at: 'just now' });
+      setInterval(refresh, pollMs);
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+/* #clients: the connected-device table, its live stat strip, per-row time bars and state-gated actions. */
+.clients-panel .panel-heading { align-items:flex-start; }
+.client-stat-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:9px; margin-bottom:13px; }
+.client-stat { padding:13px 14px; border:1px solid var(--line); background:#fbfdfa; }
+.client-stat span { display:block; margin-bottom:9px; color:var(--muted); font:10px "DM Mono",monospace; text-transform:uppercase; }
+.client-stat strong { display:block; font-size:1.4rem; line-height:1; letter-spacing:-.5px; }
+.client-stat small { display:block; margin-top:6px; color:var(--muted); font-size:.68rem; line-height:1.4; }
+.client-stat.attention-stat { border-left:3px solid var(--orange); }
+.client-toolbar { display:flex; align-items:center; gap:8px; margin-bottom:13px; }
+.client-toolbar input,.client-toolbar select { min-width:0; padding:10px 11px; border:1px solid var(--line); color:var(--ink); background:#fbfdfa; font:.74rem "DM Mono",monospace; }
+.client-toolbar input { flex:1 1 240px; }
+.client-toolbar .button { padding:10px 13px; }
+.client-toolbar button[type="submit"] { padding:10px 13px; border:1px solid var(--red); color:var(--red); background:#fff; cursor:pointer; font:600 .74rem "Space Grotesk",sans-serif; }
+.client-toolbar form { margin-left:auto; }
+.client-cell { display:grid; gap:4px; }
+.client-flags { display:flex; align-items:center; gap:5px; }
+.client-chip { display:inline-block; padding:4px 6px; color:var(--green); background:#eaf7ec; font:10px "DM Mono",monospace; text-transform:uppercase; }
+.client-chip.warn { color:#9b691d; background:#fff1df; }
+.client-chip.muted { color:var(--muted); background:#eef2ef; }
+.clients-table td { vertical-align:top; }
+.time-bar { display:block; width:92px; height:5px; margin-top:5px; background:#e8eee9; }
+.time-bar i { display:block; height:100%; background:var(--green); }
+.time-bar i.low { background:var(--orange); }
+.time-bar i.critical { background:var(--red); }
+.time-bar i.banked { background:var(--muted); }
+.time-bar i.done { background:var(--line); }
+.client-actions { flex-wrap:nowrap; }
+.client-legend { margin:13px 0 0; color:var(--muted); font-size:.7rem; line-height:1.6; }
+.client-legend b { color:var(--ink); font-weight:600; }
+/* An action only shows when it fits the row: the form helper copies data-when onto the launcher buttons. */
+tr[data-state="finished"] [data-when="live"] { display:none; }
+tr[data-state="active"] [data-when="paused"],tr[data-state="paused"] [data-when="active"] { display:none; }
+tr:not([data-state="finished"]) [data-when="finished"] { display:none; }
+@media (max-width:1050px) { .client-stat-grid { grid-template-columns:repeat(2,1fr); } }
+@media (max-width:760px) { .client-stat-grid { grid-template-columns:1fr; } .client-toolbar { flex-wrap:wrap; } .client-toolbar form { margin-left:0; } }

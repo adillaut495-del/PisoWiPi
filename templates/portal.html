@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ ssid }} | Connect</title>
+  <script>document.documentElement.classList.add('js');</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='portal.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='portal-addons.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='coin-flow.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='net-status.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='portal-experience.css') }}">
+</head>
+<body>
+  <div class="portal-splash" data-portal-splash role="status" aria-live="polite">
+    <div class="splash-inner">
+      <span class="splash-mark">P</span>
+      <strong class="splash-ssid">{{ ssid }}</strong>
+      <span class="splash-bar"><i></i></span>
+      <p class="splash-copy">{% if internet.state == 'offline' %}Uplink offline &mdash; your coins are still counted{% else %}Connecting you to the network{% endif %}&hellip;</p>
+    </div>
+    <button class="splash-skip" type="button" data-splash-skip>Skip</button>
+  </div>
+  <main class="portal-shell">
+    <header class="portal-header">
+      <a class="portal-brand" href="{{ url_for('portal') }}"><span>P</span><strong>{{ ssid }}</strong></a>
+      <div class="portal-header-meta">
+        <span class="net-status" data-net-status data-net-state="{{ internet.state }}" data-net-url="{{ url_for('internet_status_api') }}" data-net-interval="5"><span class="net-dot"></span><strong data-net-label>{{ {'online': 'Internet online', 'offline': 'Internet offline'}.get(internet.state, 'Checking internet') }}</strong><small data-net-latency>{% if internet.state == 'online' and internet.latency_ms is not none %}{{ internet.latency_ms|round|int }} ms{% endif %}</small></span>
+        <button class="rates-link" type="button" data-modal-open="rates-modal">Rates</button>
+        <button class="sound-toggle" type="button" data-sound-toggle aria-pressed="true">Sound on</button>
+      </div>
+    </header>
+    <div class="net-alert" data-net-alert{% if internet.state != 'offline' %} hidden{% endif %}><div><strong>No internet right now.</strong> The machine's uplink is offline. Stay connected to the network &mdash; your coins are still counted and access resumes as soon as the link is back.</div></div>
+    {% if pending_coin %}<section class="coin-waiting" id="coin-waiting" role="status" aria-live="polite" data-coin-count="{{ pending_coin.coin_count }}" data-coin-amount="{{ '%.2f'|format(pending_coin.amount) }}"><span class="coin-spinner"></span><div><strong id="coin-waiting-title">Coin request sent</strong><p id="coin-waiting-copy">{% if auto_settle_seconds %}Every coin is counted as it lands, and the whole total settles itself {{ auto_settle_seconds }} seconds after your last coin.{% else %}Waiting for the machine operator.{% endif %} <b><span id="pending-coin-count">{{ pending_coin.coin_count }}</span> coins</b> in / <b><span id="pending-coin-amount">P{{ '%.0f'|format(pending_coin.amount) }}</span> total</b> &rarr; <b><span id="pending-coin-minutes">{{ pending_reward.minutes }}</span> minutes</b> {% if auto_settle_seconds %}will be credited automatically.{% else %}will be applied when the operator finishes.{% endif %}</p><p class="coin-plan-line" id="pending-coin-plan">{% if pending_coin.coin_count %}Best rate for this total: {{ pending_reward.summary }}{% else %}Insert your first coin to see your best rate for the total.{% endif %}</p><form method="post" action="{{ url_for('cancel_coin_request') }}" class="coin-cancel-form"><button class="text-button" type="submit">Cancel request</button></form></div><span class="waiting-label" id="coin-waiting-label">WAITING</span></section>{% endif %}
+{% macro action_cards() %}
+    <section class="action-grid" id="get-started">
+      <article class="action-card action-card-coin" id="coin-action">
+        <span class="action-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.6"></circle><path d="M12 7.6v8.8M9.4 10.4h4.6a1.9 1.9 0 0 1 0 3.8H9.4"></path></svg></span>
+        <div class="card-heading"><span class="number">01</span><div><p class="eyebrow">COIN ACCEPTOR</p><h2>Insert coin</h2></div></div>
+        <p class="action-copy">Press the button once, then insert your coins. Coins are counted live above, and your whole total {% if auto_settle_seconds %}is settled automatically {{ auto_settle_seconds }} seconds after your last coin{% else %}is applied as soon as the operator finishes{% endif %} &mdash; always at the plan prices your operator listed.</p>
+        <ul class="coin-chip-row">{% for option in coin_options %}<li class="coin-chip"><b>P{{ '%.0f'|format(option.amount) }}</b>{{ option.minutes }} min</li>{% endfor %}</ul>
+        <p class="coin-chip-note">Each chip is the price your operator listed for that coin &mdash; coins add up, so a bigger total reaches a bigger plan in <button class="inline-link" type="button" data-modal-open="rates-modal">rates</button>.</p>
+        {% if pending_coin %}<button class="portal-button" type="button" disabled>Waiting for the operator</button><p class="action-status">Request open &mdash; watch the counter above fill up.</p>
+        {% elif acceptor_busy %}<button class="portal-button" type="button" disabled>Coin acceptor in use</button><p class="action-status">Another customer is inserting coins right now. Try again in a moment.</p>
+        {% else %}<form method="post" action="{{ url_for('request_coin') }}" class="single-coin-form"><button class="portal-button" type="submit">Insert coin now</button></form><p class="action-status">One customer at a time &mdash; press and the operator takes it from there.</p>{% endif %}
+      </article>
+      <article class="action-card action-card-voucher access-card" id="voucher-action">
+        <span class="action-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.6h16v3.9a2.5 2.5 0 0 0 0 5v1.9H4v-1.9a2.5 2.5 0 0 0 0-5z"></path><path d="M12 9v6"></path></svg></span>
+        <div class="card-heading"><span class="number">02</span><div><p class="eyebrow">VOUCHER CODE</p><h2>Use a voucher</h2></div></div>
+        <p class="action-copy">Already bought a code from the operator? Type it exactly as printed to get online instantly.</p>
+        {% if error %}<div class="portal-alert">{{ error }}</div>{% endif %}
+        <form method="post" action="{{ url_for('portal_redeem') }}" class="voucher-form">
+          <label for="code">Voucher code</label>
+          <input id="code" name="code" placeholder="e.g. A7K2F9QX" maxlength="16" autocomplete="one-time-code" required>
+          <button class="portal-button" type="submit">Connect with voucher</button>
+        </form>
+        <p class="form-hint">Codes are case-insensitive and can only be used once.</p>
+      </article>
+    </section>
+{% endmacro %}
+
+    {% if current %}
+      <section class="session-hero">
+        <div class="hero-copy"><p class="eyebrow">YOU ARE CONNECTED</p><h1>Enjoy the internet.</h1><p class="intro">Your access is active. Keep this page open to watch your remaining time.</p></div>
+        <div class="timer-card"><span class="timer-label">TIME REMAINING</span><strong id="timer">--:--:--</strong><small>Session is running</small></div>
+      </section>
+      <section class="session-grid"><div class="session-stat"><span>Download</span><strong id="download">{{ '%.1f'|format(current.data_down_mb) }} MB</strong></div><div class="session-stat"><span>Upload</span><strong id="upload">{{ '%.1f'|format(current.data_up_mb) }} MB</strong></div><div class="session-stat"><span>Speed limit</span><strong>{{ current.download_limit_mbps }} Mbps</strong></div></section>
+      <section class="top-up-section">
+        <div class="section-heading"><div><p class="eyebrow">ADD MORE TIME</p><h2>Stay connected</h2><p class="top-up-copy">Insert coins through one request or redeem a voucher. Credits stack onto your current session.</p></div><span class="demo-label">COIN ACCEPTOR / ONE AT A TIME</span></div>
+        {{ action_cards() }}
+      </section>
+      <section class="portal-note"><span class="note-icon">i</span><div><strong>Need help?</strong><p>Keep this device connected to {{ ssid }}. Your session ends automatically when the timer reaches zero.</p></div></section>
+      <form method="post" action="{{ url_for('portal_end') }}"><button class="text-button" type="submit">End session</button></form>
+    {% else %}
+      <section class="welcome-grid portal-hero">
+        <div class="welcome-copy"><p class="eyebrow">WELCOME / FREE TO CONNECT</p><h1>Fast access,<br><em>simple as piso.</em></h1><p class="intro">Insert a coin or redeem a voucher to get online in seconds. No app, no account, no waiting in line.</p></div>
+        <aside class="hero-aside">
+          <div class="network-pill"><span></span><div><strong>{{ ssid }}</strong><small>Available network</small></div></div>
+          <button class="rate-teaser" type="button" data-modal-open="rates-modal"><span class="eyebrow">COIN RATES</span><strong>P1 = {{ minutes_per_peso }} minutes</strong><small>See every rate and promo &rarr;</small></button>
+        </aside>
+      </section>
+      {{ action_cards() }}
+      <section class="portal-note"><span class="note-icon">i</span><div><strong>Not connecting?</strong><p>Make sure this device is still joined to {{ ssid }}, then ask the operator for a fresh voucher or insert another coin.</p></div></section>
+      <footer class="portal-footer"><span>By connecting, you agree to fair-use network policies.</span><span>Need assistance? Visit the machine operator.</span></footer>
+    {% endif %}
+
+    <div class="portal-modal" id="rates-modal" role="dialog" aria-modal="true" aria-labelledby="rates-title" aria-hidden="true">
+      <div class="portal-modal-card">
+        <div class="modal-heading"><div><p class="eyebrow">COIN RATES / {{ ssid }}</p><h3 id="rates-title">WiFi rates and promos</h3></div><button class="modal-close" type="button" data-modal-close>Close</button></div>
+        <div class="rate-highlight"><span>{% if p1_rate and p1_rate.plan %}{{ p1_rate.plan }}{% else %}Standard rate{% endif %}</span><strong>P1 = {{ p1_rate.minutes if p1_rate else minutes_per_peso }} minutes</strong><small>Each coin is paid at the plan price below for its amount. Coins add up, so a bigger total reaches a bigger plan, and any amount without a plan falls back to the standard rate of {{ minutes_per_peso }} min per peso.</small></div>
+        <div class="plans-section rate-plans">
+          <div class="plan-grid">{% for plan in plans %}<div class="plan-card {% if plan.bonus_minutes %}featured{% endif %}"><div class="plan-top"><span>{{ plan.name }}</span>{% if plan.bonus_minutes %}<b>BEST VALUE</b>{% endif %}</div><strong>{{ plan.minutes + plan.bonus_minutes }}<small>MIN</small></strong><p>For P{{ '%.0f'|format(plan.denomination) }}{% if plan.bonus_minutes %} including {{ plan.bonus_minutes }} min bonus{% endif %}</p></div>{% else %}<div class="plan-card"><div class="plan-top"><span>Standard</span></div><strong>{{ minutes_per_peso }}<small>MIN</small></strong><p>For P1 at the standard rate</p></div>{% endfor %}</div>
+          <p class="demo-note">Accepted coins: {% for option in coin_options %}P{{ '%.0f'|format(option.amount) }} = {{ option.minutes }} min{% if option.plan %} ({{ option.plan }}){% endif %}{% if not loop.last %} &middot; {% endif %}{% endfor %}. These prices come straight from the machine's plan table your operator maintains: coins add up, so a bigger total reaches a bigger plan, and any amount without a plan falls back to the standard rate of {{ minutes_per_peso }} min per peso. Credit is stacked onto an active session.</p>
+        </div>
+        <div class="modal-actions"><button class="portal-button secondary" type="button" data-modal-close>Got it</button>{% if not pending_coin and not acceptor_busy %}<button class="portal-button" type="button" data-modal-close data-portal-scroll="coin-action">Insert coin</button>{% endif %}</div>
+      </div>
+    </div>
+  </main>
+  {% if current %}<script>
+    let remaining = {{ remaining_seconds }};
+    const timer = document.getElementById('timer');
+    const renderTimer = () => { const h = Math.floor(remaining / 3600); const m = Math.floor((remaining % 3600) / 60); const s = remaining % 60; timer.textContent = [h, m, s].map((value) => String(value).padStart(2, '0')).join(':'); };
+    renderTimer(); setInterval(() => { remaining = Math.max(0, remaining - 1); renderTimer(); }, 1000);
+    setInterval(async () => { const response = await fetch('{{ url_for('portal_session_api') }}'); const data = await response.json(); if (!data.active) location.reload(); remaining = data.remaining_seconds; document.getElementById('download').textContent = `${data.data_down_mb.toFixed(1)} MB`; document.getElementById('upload').textContent = `${data.data_up_mb.toFixed(1)} MB`; }, 15000);
+  </script>{% endif %}
+  <script src="{{ url_for('static', filename='sound.js') }}"></script>
+  <script src="{{ url_for('static', filename='net-status.js') }}"></script>
+  <script src="{{ url_for('static', filename='portal-experience.js') }}"></script>
+
+  <script>
+    (() => {
+      const banner = document.getElementById('coin-waiting');
+      if (!banner) return;
+      const title = document.getElementById('coin-waiting-title');
+      const label = document.getElementById('coin-waiting-label');
+      const count = document.getElementById('pending-coin-count');
+      const amount = document.getElementById('pending-coin-amount');
+      const minutes = document.getElementById('pending-coin-minutes');
+      const plan = document.getElementById('pending-coin-plan');
+      const beep = (name, options) => { if (window.PisoSound) window.PisoSound.play(name, options); };
+      let lastCount = Number(banner.dataset.coinCount || 0);
+      let lastAmount = Number(banner.dataset.coinAmount || 0);
+      const fill = (data) => {
+        count.textContent = data.coin_count;
+        amount.textContent = `P${Number(data.amount).toFixed(0)}`;
+        minutes.textContent = data.minutes;
+        if (plan) {
+          const mix = data.reward && data.reward.summary;
+          plan.textContent = data.coin_count
+            ? `Best rate for this total: ${mix || `${data.minutes} minutes`}`
+            : 'Insert your first coin to see your best rate for the total.';
+        }
+      };
+      let stopped = false;
+      const poll = async () => {
+        if (stopped) return;
+        try {
+          const response = await fetch('{{ url_for('portal_coin_request_api') }}', { cache: 'no-store', headers: { Accept: 'application/json' } });
+          if (!response.ok) return;
+          const data = await response.json();
+          if (data.status === 'pending') {
+            fill(data);
+            const landed = data.coin_count - lastCount;
+            if (landed > 0) {
+              const worth = Number(data.amount) - lastAmount;
+              for (let index = 0; index < Math.min(landed, 4); index += 1) {
+                setTimeout(() => beep('coin', { amount: worth }), index * 110);
+              }
+            }
+            lastCount = data.coin_count;
+            lastAmount = Number(data.amount);
+            label.textContent = data.coin_count > 0 ? 'ACCEPTING' : 'WAITING';
+            return;
+          }
+          stopped = true;
+          if (data.status === 'accepted') {
+            fill(data);
+            title.textContent = 'Coins accepted';
+            label.textContent = 'ACTIVATING';
+            beep('success');
+            setTimeout(() => location.reload(), 900);
+            return;
+          }
+          if (data.status === 'expired') {
+            title.textContent = 'Coin request timed out';
+            label.textContent = 'CLOSED';
+            beep('error');
+            return;
+          }
+          location.reload();
+        } catch (error) {
+          // Transient network error: keep polling.
+        }
+      };
+      poll();
+      setInterval(poll, 2000);
+    })();
+  </script>
+</body>
+</html>
+

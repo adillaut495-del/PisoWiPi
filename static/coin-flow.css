@@ -1,0 +1,29 @@
+.coin-waiting { display:flex; align-items:center; gap:13px; margin-bottom:18px; padding:14px 17px; border:1px solid #efd6a7; background:#fff8e9; }.coin-spinner { width:12px; height:12px; border:2px solid #e8c98f; border-top-color:var(--orange); border-radius:50%; animation:coin-spin .8s linear infinite; }.coin-waiting div { flex:1; }.coin-waiting strong { font-size:.8rem; }.coin-waiting p { margin:4px 0 0; color:#8b744f; font-size:.72rem; line-height:1.4; }.waiting-label { color:#a16d25; font:10px "DM Mono",monospace; }
+/* The whole payment, once the operator finishes, is paid at the plan prices the total reaches. */
+.coin-waiting .coin-plan-line { margin-top:7px; padding:6px 9px; border:1px dashed #e8c98f; color:#a16d25; background:#fffdf4; font:10px "DM Mono",monospace; line-height:1.5; }
+@keyframes coin-spin { to { transform:rotate(360deg); } }
+.coin-queue-panel { margin:12px 0; padding:23px; background:var(--panel); border-left:3px solid var(--orange); box-shadow:var(--shadow); }.coin-request-list { display:grid; gap:9px; }.coin-request-row { display:flex; align-items:center; gap:15px; justify-content:space-between; padding:13px; border:1px solid var(--line); background:#fffdf9; }.coin-request-row > div { display:grid; gap:5px; }.coin-request-row strong { font-size:.82rem; }.coin-request-row small { color:var(--muted); font:10px "DM Mono",monospace; }.coin-request-row form { margin:0; }.coin-request-row .button { white-space:nowrap; }
+@media (max-width:600px) { .coin-request-row { align-items:stretch; flex-direction:column; }.coin-request-row .button { width:100%; }.coin-waiting { align-items:flex-start; }.waiting-label { margin-left:auto; } }
+.coin-request-list[hidden] { display:none; }
+.single-coin-form { margin-top:16px; }.single-coin-form .portal-button { width:100%; }
+.portal-button:disabled { opacity:.62; cursor:not-allowed; }
+.coin-cancel-form { margin:0; }.coin-cancel-form .text-button { margin-top:8px; }
+.coin-sim-total { display:grid; gap:5px; padding:15px 16px; border:1px solid #efd6a7; background:#fff8e9; }.coin-sim-total > span { color:#8b744f; font:10px "DM Mono",monospace; text-transform:uppercase; }.coin-sim-total > strong { font-size:1.32rem; letter-spacing:-.5px; }.coin-sim-total > small { color:#8b744f; font:10px "DM Mono",monospace; }
+/* Shows the plan mix the client's running total already covers. */
+.coin-sim-reward { display:block; margin-top:9px; padding-top:9px; border-top:1px dashed #e8c98f; color:#a16d25; font:10px "DM Mono",monospace; font-style:normal; line-height:1.5; }
+.coin-denominations { display:grid; grid-template-columns:repeat(4,1fr); gap:9px; margin:17px 0 0; }.coin-denominations button { display:grid; gap:5px; place-items:center; padding:14px 8px; border:1px solid var(--line); color:var(--ink); background:#fffdf9; font-family:inherit; cursor:pointer; }.coin-denominations button strong { font-size:1.05rem; }.coin-denominations button span { color:var(--muted); font:10px "DM Mono",monospace; }.coin-denominations button:hover:not(:disabled) { border-color:var(--orange); background:#fff3e2; }.coin-denominations button:disabled { opacity:.5; cursor:not-allowed; }
+.coin-sim-status { margin:15px 0 0; padding:10px 12px; color:var(--green); background:#eaf7ec; font:10px "DM Mono",monospace; line-height:1.5; }
+.complete-coin-button { width:100%; margin-top:14px; color:#fff; background:var(--green); }.complete-coin-button:hover:not(:disabled) { background:#2f8f5c; }.complete-coin-button:disabled { opacity:.55; cursor:not-allowed; }
+.coin-simulator-modal { width:min(520px,100%); }
+@media (max-width:600px) { .coin-denominations { grid-template-columns:repeat(2,1fr); } }
+/* Dashboard #pricing strip: the coin rates the plan rows add up to. */
+.coin-rate-strip { display:grid; gap:13px; margin-top:16px; padding-top:15px; border-top:1px dashed var(--line); }
+.coin-rate-heading { display:grid; gap:4px; }.coin-rate-heading p { margin:0; }.coin-rate-heading strong { font-size:.95rem; }.coin-rate-heading span { color:var(--muted); font:10px "DM Mono",monospace; line-height:1.6; }
+.coin-rate-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr)); gap:9px; }
+.coin-rate-card { display:grid; gap:4px; align-content:start; padding:12px 13px; border:1px solid var(--line); background:#fffdf9; }.coin-rate-card.has-hint { border-color:#e8c98f; }
+.coin-rate-amount { color:var(--muted); font:10px "DM Mono",monospace; letter-spacing:.06em; }
+.coin-rate-card strong { font-size:1.05rem; }.coin-rate-card strong small { margin-left:4px; color:var(--muted); font:10px "DM Mono",monospace; }
+.coin-rate-source { color:var(--green); font:10px "DM Mono",monospace; }
+.coin-rate-hint { padding-top:7px; border-top:1px dashed #e8c98f; color:#a16d25; font:10px "DM Mono",monospace; font-style:normal; line-height:1.5; }
+
+
