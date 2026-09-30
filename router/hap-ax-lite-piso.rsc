@@ -170,7 +170,7 @@
 # login-by=http-chap  -> fallback: type the MAC as both user name and password on the router page
 # cookie / mac-cookie -> a device that paid keeps its session through a disconnect
 :if ([:len [/ip/hotspot/profile find where name=$hotspotProfile]] = 0) do={
-    /ip/hotspot/profile add name=$hotspotProfile hotspot-address=$gateway dns-name=$dnsName html-directory=hotspot login-by=mac,http-chap,cookie,mac-cookie http-cookie-lifetime=1d split-user-domain=no use-radius=no comment="PisoPilot portal profile"
+    /ip/hotspot/profile add name=$hotspotProfile hotspot-address=$gateway dns-name=$dnsName html-directory=hotspot login-by=mac,http-chap,cookie,mac-cookie http-cookie-lifetime=1d split-user-domain=no use-radius=no
 }
 /ip/hotspot/profile set [find where name=$hotspotProfile] hotspot-address=$gateway dns-name=$dnsName login-by=mac,http-chap,cookie,mac-cookie http-cookie-lifetime=1d split-user-domain=no use-radius=no
 
@@ -181,10 +181,10 @@
 # NOTE: rate-limit is "upload/download" as the client sees it - RouterOS docs:
 #       "to set 1M download and 512k upload for the client, use 512k/1M".
 :if ([:len [/ip/hotspot/user/profile find where name=$packageProfile]] = 0) do={
-    /ip/hotspot/user/profile add name=$packageProfile rate-limit="1M/2M" shared-users=1 keepalive-timeout=3m idle-timeout=none session-timeout=0s add-mac-cookie=yes mac-cookie-timeout=1d open-status-page=http-login comment="PisoPilot paid tier 1M up / 2M down"
+    /ip/hotspot/user/profile add name=$packageProfile rate-limit="1M/2M" shared-users=1 keepalive-timeout=3m idle-timeout=none session-timeout=0s add-mac-cookie=yes mac-cookie-timeout=1d open-status-page=http-login
 }
 :if ([:len [/ip/hotspot/user/profile find where name=$premiumProfile]] = 0) do={
-    /ip/hotspot/user/profile add name=$premiumProfile rate-limit="2M/5M" shared-users=1 keepalive-timeout=3m idle-timeout=none session-timeout=0s add-mac-cookie=yes mac-cookie-timeout=1d open-status-page=http-login comment="PisoPilot premium tier 2M up / 5M down"
+    /ip/hotspot/user/profile add name=$premiumProfile rate-limit="2M/5M" shared-users=1 keepalive-timeout=3m idle-timeout=none session-timeout=0s add-mac-cookie=yes mac-cookie-timeout=1d open-status-page=http-login
 }
 
 # ----------------------------------------------------------- 7. HOTSPOT SERVER
@@ -192,16 +192,19 @@
 # router already handed out. addresses-per-mac=2 tolerates a phone that
 # re-connects and changes address while it still has paid time.
 :if ([:len [/ip/hotspot find where name=$hotspotServer]] = 0) do={
-    /ip/hotspot add name=$hotspotServer interface=$lanBridge profile=$hotspotProfile address-pool=none addresses-per-mac=2 login-timeout=1m comment="PisoPilot captive portal"
+    /ip/hotspot add name=$hotspotServer interface=$lanBridge profile=$hotspotProfile address-pool=none addresses-per-mac=2 login-timeout=1m
 }
 /ip/hotspot set [find where name=$hotspotServer] interface=$lanBridge profile=$hotspotProfile addresses-per-mac=2
 
 # ------------------------------------------------ 8. WALLED GARDEN + BYPASS
 # Unpaid clients may reach the controller (so the portal and the coin slot
 # screen load) and nothing else. Everything else is cut off until they pay.
-# Each rule is looked up by its own comment so re-importing never duplicates one.
-:if ([:len [/ip/hotspot/walled-garden/ip find where comment="PisoPilot portal (Raspberry Pi)"]] = 0) do={
-    /ip/hotspot/walled-garden/ip add action=accept dst-address=($portalIp . "/32") comment="PisoPilot portal (Raspberry Pi)"
+# Re-import safety: the two address rules are matched on their destination and
+# on a comment only where that menu accepts one. RouterOS rejects comment= on
+# /ip/hotspot/profile (and the other HotSpot object menus), so those entries are
+# left unlabelled and are identified by name or address instead.
+:if ([:len [/ip/hotspot/walled-garden/ip find where dst-address=($portalIp . "/32") or dst-address=$portalIp]] = 0) do={
+    /ip/hotspot/walled-garden/ip add action=accept dst-address=($portalIp . "/32")
 }
 :if ([:len [/ip/hotspot/walled-garden find where comment="PisoPilot portal name"]] = 0) do={
     /ip/hotspot/walled-garden add action=allow dst-host=$dnsName comment="PisoPilot portal name"
@@ -211,8 +214,8 @@
 }
 # The controller itself is not a paying customer: bypass it so the console,
 # the REST API and the coin listener are never held behind the login page.
-:if ([:len [/ip/hotspot/ip-binding find where comment="PisoPilot controller bypass"]] = 0) do={
-    /ip/hotspot/ip-binding add type=bypassed address=$portalIp comment="PisoPilot controller bypass"
+:if ([:len [/ip/hotspot/ip-binding find where address=$portalIp or address=($portalIp . "/32")]] = 0) do={
+    /ip/hotspot/ip-binding add type=bypassed address=$portalIp
 }
 
 # ------------------------------------------------------ 9. STATIC PI LEASE
@@ -220,7 +223,7 @@
 # PISO_ROUTER_* settings all point at one fixed address.
 :if ([:len $piMac] > 0) do={
     :if ([:len [/ip/dhcp-server/lease find where address=$portalIp]] = 0) do={
-        /ip/dhcp-server/lease add address=$portalIp mac-address=$piMac server=$dhcpServer comment="PisoPilot controller (Raspberry Pi)"
+        /ip/dhcp-server/lease add address=$portalIp mac-address=$piMac server=$dhcpServer
     } else={
         /ip/dhcp-server/lease set [find where address=$portalIp] mac-address=$piMac
     }
@@ -232,10 +235,10 @@
 # app.py talks to /rest over HTTPS with this user. read + write cover the
 # HotSpot user and active tables; rest-api is the policy that unlocks REST.
 :if ([:len [/user/group find where name="piso-api"]] = 0) do={
-    /user/group add name="piso-api" policy=read,write,api,rest-api,test comment="PisoPilot REST access"
+    /user/group add name="piso-api" policy=read,write,api,rest-api,test
 }
 :if ([:len [/user find where name=$apiUser]] = 0) do={
-    /user add name=$apiUser group="piso-api" password=$apiPassword comment="PisoPilot controller"
+    /user add name=$apiUser group="piso-api" password=$apiPassword
 } else={
     /user set [find where name=$apiUser] group="piso-api" password=$apiPassword
 }
