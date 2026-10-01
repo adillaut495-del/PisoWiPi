@@ -185,7 +185,19 @@ def main(argv=None) -> int:
     option_114 = next((row for row in options if str(row.get("code")) == "114"), None)
     dhcp_servers, _, _ = timed(adapter._request, "GET", "ip/dhcp-server")
     dhcp_servers = dhcp_servers if isinstance(dhcp_servers, list) else ([dhcp_servers] if dhcp_servers else [])
-    carrying = [str(row.get("name")) for row in dhcp_servers if str(row.get("option-set", ""))]
+    # The REST property is "dhcp-option-set", NOT "option-set" - the same prefix
+    # the CLI refuses. Reading "option-set" here made this check impossible to
+    # pass even when the server was correctly configured, so it reported a
+    # failure that did not exist.
+    def carried(row) -> str:
+        for key in ("dhcp-option-set", "option-set"):
+            value = row.get(key)
+            if value not in (None, "", "none"):
+                return str(value)
+        return ""
+
+    carrying = [str(row.get("name")) for row in dhcp_servers if carried(row)]
+    guest_carrying = [str(row.get("name")) for row in dhcp_servers if carried(row) and "guest" in str(row.get("name", "")).lower()]
 
     report.check(
         "DHCP option 114 is defined (RFC 8910 captive-portal URL)",
@@ -195,8 +207,20 @@ def main(argv=None) -> int:
     report.check(
         "a DHCP server actually sends an option set",
         bool(carrying),
-        ", ".join(carrying) if carrying else "no server has option-set set, so option 114 would never leave the router",
+        ", ".join(f"{name} ({carried(next(row for row in dhcp_servers if row.get('name') == name))})" for name in carrying)
+        if carrying
+        else "no server has dhcp-option-set set, so option 114 would never leave the router",
     )
+    # The set must be on the GUEST server. On the wired LAN it would make the
+    # desk computer pop the customer portal as well.
+    if carrying:
+        report.check(
+            "the option set is on the guest server, not the wired LAN",
+            bool(guest_carrying),
+            ", ".join(guest_carrying)
+            if guest_carrying
+            else "only " + ", ".join(carrying) + " carries it - a wired machine would be told about the portal",
+        )
     report.check(
         "hotspot/api.json answers the option 114 probe",
         api is not None,
