@@ -1758,5 +1758,10 @@ if __name__ == "__main__":
     # The Werkzeug reloader executes this module twice. Only the serving process may claim the GPIO pin,
     # otherwise two listeners would count every coin twice.
     if not debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
-        start_hardware()
+        try:
+            start_hardware()
+        except Exception as error:
+            # The portal has to come up even when a peripheral does not: it is the page that
+            # takes the money. Keep serving and surface the fault in the console log instead.
+            write_log("hardware", f"Hardware did not start, serving the portal without it: {error}", "error")
     app.run(host="0.0.0.0", port=5000, debug=debug)

@@ -188,12 +188,21 @@ countdown; press the listed button or power-cycle during it):
 ## 5. Prepare the Raspberry Pi
 
 ```
-sudo apt update && sudo apt install -y python3-venv git
+sudo apt update && sudo apt install -y python3-venv git python3-lgpio
 cd ~ && git clone <your-repo> piso-wifi && cd piso-wifi
-python3 -m venv .venv && . .venv/bin/activate
+python3 -m venv --system-site-packages .venv && . .venv/bin/activate
 pip install -r requirements.txt
+python -c "import gpiozero, lgpio; print('GPIO backend OK')"
 cp .env.example .env
 ```
+
+`--system-site-packages` and `python3-lgpio` are not optional details. gpiozero needs a real
+pin backend, and on Bookworm the one the system Python has is invisible inside a plain venv.
+Without it gpiozero falls back to `/sys/class/gpio`, which modern kernels no longer provide,
+and `start_hardware()` dies **before** `app.run()` — so nothing ever listens on 5000 and the
+router's `login.html` fetch has nothing to download. The `python -c "import gpiozero, lgpio"`
+line is the check; if it fails, fix that before anything else. (On an older Bullseye image the
+backend is `python3-rpi.gpio` instead.)
 
 Give the Pi a fixed address (`sudo raspi-config` → *Network* → static, or the
 DHCP lease created by the script) and keep it on **ether2/ether3/ether4** — never
@@ -306,7 +315,8 @@ Drop one coin of each denomination and write down the pulse counts. Update
 | **Phone joins the SSID and already has internet, no portal** | The portal is not enforcing. Run `python router/check_rsc.py` on the laptop, re-import the `.rsc`, then confirm on the router: `/ip/firewall/filter print` (the four `PisoPilot:` rules, all scoped to `bridge-guest`, ordered `established,related` → walled garden → walled garden → drop, plus the **dynamic** `D` `hs-unauth` jumps the HotSpot adds itself) and `/ipv6/address print` (nothing global advertised on `bridge-guest`). Sections 8b/8c exist for exactly this |
 | **Phone has no internet even after paying** | The drop is above the walled-garden accepts, or `hotspot=!auth` matched a paying device. Check the order in `/ip/firewall/filter print` and `/ip/hotspot/active print` — a paying device must be listed there |
 | Blocked, and the portal never loads either | A forward drop sits above the walled-garden accept. The HotSpot evaluates the walled garden in `hs-unauth` with `action=return`, which hands the packet back to the forward chain, so the portal accept has to be higher up than the drop |
-| RouterOS login form instead of the portal | The `login.html` fetch failed, so the router serves its own form. `/tool fetch` does **not** raise a script error when a download fails, so the import reports success regardless. Work through it in this order: (1) on the Pi, `curl -sS -o /dev/null -w '%{http_code}' http://192.168.88.2:5000/hotspot/login.html` must print `200` — if not, `app.py` is not serving; (2) on the router, `/log print where message~"PisoPilot: hotspot/login.html"` shows the warning the script logged; (3) `/file print where name~"hotspot"` must list `hotspot/login.html` — if the `hotspot` folder is empty, re-run `/tool fetch url="http://192.168.88.2:5000/hotspot/login.html" dst-path=hotspot/login.html`; (4) `fetch` must be allowed in device-mode (`/system/device-mode print`) |
+| App never listens on 5000 (nothing is served at all) | `start_hardware()` runs **before** `app.run()` in `app.py`, so a coin-pin failure takes the whole portal down — and then the router's `login.html` fetch has nothing to download. The usual cause on Bookworm is no GPIO backend inside the venv: `PinFactoryFallback: No module named 'lgpio'` / `'RPi'`, then `KeyError: 17` and `OSError: [Errno 22] Invalid argument` from `/sys/class/gpio`, which modern kernels no longer provide. Fix the venv (`sudo apt install -y python3-lgpio`, then `python3 -m venv --system-site-packages .venv`, or `pip install rpi-lgpio`), or set `PISO_HARDWARE_MODE=simulation` to bring the portal up before the acceptor is wired. Confirm with `python -c "import gpiozero, lgpio"`. A claimed-pin failure now logs and keeps serving instead of exiting |
+| RouterOS login form instead of the portal | The `login.html` fetch failed, so the router serves its own form. `/tool fetch` does **not** raise a script error when a download fails, so the import reports success regardless. Work through it in this order: (1) on the Pi, `curl -sS -o /dev/null -w '%{http_code}' http://192.168.88.2:5000/hotspot/login.html` must print `200` — if not, `app.py` is not serving (see the row above); (2) on the router, `/log print where message~"PisoPilot: hotspot/login.html"` shows the warning the script logged; (3) `/file print where name~"hotspot"` must list `hotspot/login.html` — if the `hotspot` folder is empty, re-run `/tool fetch url="http://192.168.88.2:5000/hotspot/login.html" dst-path=hotspot/login.html`; (4) `fetch` must be allowed in device-mode (`/system/device-mode print`) |
 | Portal never loads on the phone | `/ip/hotspot/walled-garden/ip print` must show the Pi. From the router: `/tool ping 192.168.88.2 count=2` |
 | Phone browses, portal ignored, IPv6 suspected | A HotSpot is IPv4 only — its NAT interception has no IPv6 equivalent. If the phone got a global IPv6 it walks straight past the portal. `/ipv6/address print` must show no `advertise=yes` on `bridge-guest`; `/ipv6/firewall/filter print where comment="PisoPilot: no IPv6 for customers"` must list the drop |
 | `/ip/hotspot` is greyed out in WinBox | Restricted device mode: `/system/device-mode set hotspot=yes fetch=yes`. The script does this in section 4b, but a later factory reset puts it back |

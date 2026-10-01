@@ -141,6 +141,9 @@ def main(argv=None) -> int:
     hotspot_files = sorted(str(item.get("name", "")) for item in files if "hotspot" in str(item.get("name", "")))
     if hotspot_files:
         report.note("what the router has under hotspot/: " + ", ".join(hotspot_files))
+        if hotspot_files == ["hotspot"]:
+            report.note("only the bare folder came back, so /rest/file may not list inside it.")
+            report.note('Settle it on the router: /file print where name~"hotspot"')
     else:
         report.note("NOTHING under hotspot/ is visible to /rest/file - the login page cannot be served.")
         report.note('Confirm on the router: /file print where name~"hotspot"')

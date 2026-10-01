@@ -251,12 +251,27 @@ class CoinPulseListener:
 
     @property
     def available(self):
+        """True when the pin *could* be claimed: real mode, with a GPIO library present."""
         return self.config.mode == "real" and DigitalInputDevice is not None
+
+    @property
+    def listening(self):
+        """True only once this process really holds the pin, so the console can trust it."""
+        return self.device is not None
 
     def start(self):
         if not self.available:
             return {"status": "simulated", "detail": "GPIO listener disabled"}
-        self.device = DigitalInputDevice(self.config.coin_gpio, pull_up=self.config.coin_pull_up)
+        try:
+            self.device = DigitalInputDevice(self.config.coin_gpio, pull_up=self.config.coin_pull_up)
+        except Exception as error:
+            # A dead coin pin must never take the portal down with it. The portal is the page
+            # that takes the money, and a process that dies here leaves nobody able to even see
+            # the fault. Leave the pin unclaimed, report it, and keep serving - the console
+            # shows the acceptor as offline.
+            self.device = None
+            LOGGER.error("could not claim GPIO%s for the coin acceptor: %s", self.config.coin_gpio, error)
+            return {"status": "offline", "gpio": self.config.coin_gpio, "detail": str(error)}
         if self.config.coin_active_low:
             self.device.when_deactivated = self._pulse
         else:
@@ -298,12 +313,22 @@ def real_mode():
     return router_adapter.config.mode == "real"
 
 
+def coin_listener_state():
+    """What the coin acceptor is really doing: 'simulated' outside real mode, 'offline' when
+    the pin could not be claimed. Reading this straight off the config used to report 'online'
+    for an acceptor that never started, which is the worst possible thing to hide."""
+    if not real_mode():
+        return "simulated"
+    return "online" if coin_listener is not None and coin_listener.listening else "offline"
+
+
 def hardware_status():
     router = router_adapter.health()
+    state = coin_listener_state()
     return {
         "mode": router_adapter.config.mode,
-        "coin_acceptor": "online" if coin_listener and coin_listener.available else "simulated",
-        "controller": "online" if coin_listener and coin_listener.available else "simulated",
+        "coin_acceptor": state,
+        "controller": state,
         "gateway": router.get("status", "offline"),
         "router": router,
     }
