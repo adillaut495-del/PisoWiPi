@@ -91,7 +91,7 @@ KNOWN_PROPERTIES: dict[str, set[str]] = {
         "mac-cookie-timeout",
         "open-status-page",
     },
-    "/ip/hotspot/ip-binding": {"type", "address", "mac-address", "server"},
+    "/ip/hotspot/ip-binding": {"type", "address", "mac-address", "server", "comment"},
     "/ip/hotspot/walled-garden": {"action", "dst-host", "dst-port", "protocol", "comment", "disabled"},
     "/ip/hotspot/walled-garden/ip": {"action", "dst-address", "dst-port", "protocol", "comment", "disabled"},
     "/user": {"name", "group", "password"},

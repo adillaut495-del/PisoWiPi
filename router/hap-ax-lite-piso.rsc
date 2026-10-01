@@ -219,6 +219,12 @@
 :if ([:len [/ip/hotspot/ip-binding find where address=$portalIp or address=($portalIp . "/32")]] = 0) do={
 /ip/hotspot/ip-binding add type=bypassed address=$portalIp
 }
+# The controller must never be a paying customer. A Pi whose own Wi-Fi has also
+# joined the SSID shows up on the guest bridge as well, and the address above
+# (192.168.88.2) does not cover that face of it - so bypass it by MAC too.
+:if ([:len [/ip/hotspot/ip-binding find where mac-address=$piMac]] = 0) do={
+/ip/hotspot/ip-binding add type=bypassed mac-address=$piMac comment="PisoPilot controller"
+}
  
 :if ([:len [/ip/firewall/filter find where comment="PisoPilot: established,related"]] = 0) do={
 /ip/firewall/filter add chain=forward action=accept connection-state=established,related comment="PisoPilot: established,related"

@@ -138,6 +138,12 @@ def main(argv=None) -> int:
 
     files, _, error = timed(adapter._request, "GET", "file")
     files = files if isinstance(files, list) else ([files] if files else [])
+    hotspot_files = sorted(str(item.get("name", "")) for item in files if "hotspot" in str(item.get("name", "")))
+    if hotspot_files:
+        report.note("what the router has under hotspot/: " + ", ".join(hotspot_files))
+    else:
+        report.note("NOTHING under hotspot/ is visible to /rest/file - the login page cannot be served.")
+        report.note('Confirm on the router: /file print where name~"hotspot"')
     page = next((item for item in files if str(item.get("name", "")).endswith("hotspot/login.html")), None)
     page_size = int(page.get("size") or 0) if page else 0
     report.check(
@@ -146,7 +152,13 @@ def main(argv=None) -> int:
         str(page_size) + " bytes" if page else "MISSING - the customer gets the RouterOS login form",
     )
     if page_size <= 500:
-        report.note('fix it from the router terminal: /tool fetch url="http://<pi-ip>:5000/hotspot/login.html" dst-path=hotspot/login.html')
+        report.note("is app.py really serving it? Test on the Pi first:")
+        report.note("  curl -sS -o /dev/null -w '%{http_code}' http://192.168.88.2:5000/hotspot/login.html")
+        report.note("then install it from the router terminal:")
+        report.note('  /tool fetch url="http://192.168.88.2:5000/hotspot/login.html" dst-path=hotspot/login.html')
+        report.note('  /file print where name~"hotspot"')
+        report.note("and read the import log for the warning:")
+        report.note('  /log print where message~"PisoPilot: hotspot/login.html"')
     api = next((item for item in files if str(item.get("name", "")).endswith("hotspot/api.json")), None)
     report.check("hotspot/api.json is installed (RFC 7710 self-opening portal)", api is not None)
 
@@ -155,7 +167,10 @@ def main(argv=None) -> int:
     router_ips = {str(item.get("address", "")).split("/")[0] for item in addresses}
     static, _, _ = timed(adapter._request, "GET", "ip/dns/static")
     static = static if isinstance(static, list) else ([static] if static else [])
-    for entry in profiles:
+    # Only the profiles the HotSpot servers actually use: the stock "default"
+    # profile is not in service, so its empty dns-name is not a fault.
+    live = {str(server.get("profile")) for server in servers if server.get("profile")}
+    for entry in [row for row in profiles if str(row.get("name")) in live] or profiles:
         profile_name = str(entry.get("name"))
         dns_name = str(entry.get("dns-name", ""))
         if not dns_name:
@@ -177,10 +192,10 @@ def main(argv=None) -> int:
             )
         )
         if "ssl-certificate" not in entry:
-            report.note("ssl-certificate is not exposed on this RouterOS, so the RFC 7710 DHCP")
-            report.note("option is off and a modern phone will not open the portal by itself.")
-            report.note("Test the line on your own router first, then add it:")
-            report.note("  /ip/hotspot/profile set " + profile_name + " ssl-certificate=piso-cert")
+            report.note("this firmware does not expose 'ssl-certificate' on the HotSpot profile,")
+            report.note("so the RFC 7710 DHCP option is unavailable and a phone will not open")
+            report.note("the portal by itself. Type a plain http:// address instead.")
+            report.note("Confirm on the router with: /ip/hotspot/profile print detail")
     print()
 
 
