@@ -54,13 +54,18 @@ KNOWN_PROPERTIES: dict[str, set[str]] = {
         "lease-time",
         "disabled",
         "comment",
-        "option-set",
+        # NOT "option-set". Verified on 7.24.4:
+        #   /ip/dhcp-server set x option-set=y   -> bad parameter option-set
+        "dhcp-option-set",
     },
-    # RFC 8910 / option 114. "option-sets" is the SET menu and its property is
-    # singular "option"; a plural here would be a parse error that stops the
-    # import before the set is ever attached to the guest DHCP server.
+    # RFC 8910 / option 114, with the two property names that are easy to get
+    # wrong. Both were confirmed by the router refusing the singular form:
+    #   /ip/dhcp-server/option/sets set x option=y  -> action cancelled
+    #   value="https://..."                          -> Unknown data type!
+    # A bare string is not a data type: the value needs single quotes INSIDE the
+    # double quotes, i.e. value="'https://...'", or the option is refused.
     "/ip/dhcp-server/option": {"name", "code", "value", "force", "comment"},
-    "/ip/dhcp-server/option/sets": {"name", "option", "comment"},
+    "/ip/dhcp-server/option/sets": {"name", "options", "comment"},
     "/ip/dhcp-server/network": {"address", "gateway", "dns-server", "netmask", "comment"},
     "/ip/dhcp-server/lease": {"address", "mac-address", "server", "comment"},
     "/ip/dhcp-client": {"interface", "disabled", "comment"},
@@ -120,6 +125,9 @@ KNOWN_PROPERTIES: dict[str, set[str]] = {
 # explicit insurance against the same typo coming back.
 WRONG_PROPERTIES = {
     "disable-advertise": "on /ipv6/nd/prefix the property is 'advertise' (use advertise=no)",
+    # All four confirmed against a hAP ax lite on 7.24.4. Keys are matched
+    # against the bare property name, so they carry no "=".
+    "option-set": "on /ip/dhcp-server the property is 'dhcp-option-set' (bad parameter option-set)",
 }
 
 # "/menu/path set|add|find ... key=value" -> the menu and the property names.
@@ -332,20 +340,28 @@ def check_option_114_wiring(text: str) -> list[str]:
     problems: list[str] = []
     if ":local enableRfc8910" not in text:
         return problems  # the section was switched off deliberately
-    if not re.search(r"/ip/dhcp-server/option\s+add\b[^\n]*\bcode=114\b", text):
+    # The on-error blocks below quote the broken commands back to the operator,
+    # e.g. "...dhcp-option-set=" inside a :log warning. Searching the raw text
+    # finds those echoes and reports the script as correct when it is not, so
+    # every rule below runs against a copy with comments and quoted strings
+    # removed. That is what makes the check trustworthy.
+    bare = "\n".join(code_only(line) for line in text.splitlines())
+
+    if not re.search(r"/ip/dhcp-server/option\s+add\b[^\n]*\bcode=114\b", bare):
         problems.append("no '/ip/dhcp-server/option add ... code=114' - nothing defines the option")
-    if not re.search(r"/ip/dhcp-server/option/sets\s+add\b", text):
+    if not re.search(r"/ip/dhcp-server/option/sets\s+add\b", bare):
         problems.append("no option SET is created - a defined option is never sent without one")
-    if not re.search(r"/ip/dhcp-server\s+set\b[^\n]*option-set=", text):
+    if not re.search(r"/ip/dhcp-server\s+set\b[^\n]*dhcp-option-set=", bare):
         problems.append(
-            "no DHCP server is given an option-set - RouterOS only sends option 114 "
-            "to clients of a server that carries a set"
+            "no DHCP server is given dhcp-option-set - RouterOS only sends option 114 "
+            "to clients of a server that carries a set (the property is 'dhcp-option-set', "
+            "not 'option-set')"
         )
     # It must be the guest server. Pointing the wired LAN at the option set would
     # make the desk computer pop the customer portal too.
     for number, raw in enumerate(text.splitlines(), start=1):
         code = code_before_comment(raw)
-        if "/ip/dhcp-server set" in code and "option-set=" in code and "$guestDhcpServer" not in code:
+        if "/ip/dhcp-server set" in code and "dhcp-option-set=" in code and "$guestDhcpServer" not in code:
             problems.append(
                 f"line {number}: the option set is attached to the wrong DHCP server - "
                 f"only the guest side may be told about the portal: {code.strip()}"
@@ -355,6 +371,32 @@ def check_option_114_wiring(text: str) -> list[str]:
             "api.json is never fetched - option 114 points at a URL that would "
             "answer 404, so the client has nothing to open"
         )
+    # The mistakes the router actually reported, kept as rules now that the
+    # property table can no longer catch them (they are all *valid* names that
+    # mean the wrong thing, or a valid value with no data type).
+    if not re.search(r"/ip/dhcp-server/option/sets\s+set\b[^\n]*\boptions=", bare):
+        problems.append(
+            "the option set is filled with 'options=', not 'option=' - the router "
+            "rejects the singular form with 'action cancelled'"
+        )
+    # "/certificate sign" is NOT a bug in general - the management cert
+    # piso-cert is signed successfully on this router. It only fails for the
+    # HotSpot cert, where there is no CA to issue it. Scope the rule to the
+    # HotSpot block so it cannot flag the line that demonstrably works.
+    if re.search(r"certificate sign \$hotspotCertName", bare):
+        problems.append(
+            "'/certificate sign $hotspotCertName' fails with 'CA not found' - there is "
+            "no CA here, and /certificate add already makes a self-signed certificate"
+        )
+    for number, raw in enumerate(text.splitlines(), start=1):
+        code = code_before_comment(raw)
+        if "/ip/dhcp-server/option" in code and re.search(r"\bvalue=(?![\"'$])\S", code):
+            problems.append(
+                f"line {number}: the option value has no data type - RouterOS answers "
+                f"'Unknown data type!' unless the string is quoted inside the quotes, "
+                f"i.e. value=\"'https://...'\": {code.strip()}"
+            )
+            break
     return problems
 
 

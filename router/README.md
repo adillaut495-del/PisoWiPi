@@ -346,43 +346,46 @@ default — set `enableRfc8910` to anything else to skip it):
 
 | Step | Command the script runs | Why it is needed |
 | --- | --- | --- |
-| 1 | `/certificate add … common-name=hotspot.piso.local` + `sign` | a cert whose name matches the HotSpot `dns-name`, so the `/api` URL is served over real https |
+| 1 | `/certificate add … common-name=hotspot.piso.local` | a cert whose name matches the HotSpot `dns-name`, so the `/api` URL is served over real https. **Do not add `/certificate sign`** — see below |
 | 2 | `/ip/hotspot/profile set … ssl-certificate=` | tells the HotSpot to serve that cert |
-| 3 | `/ip/dhcp-server/option add … code=114 value="https://hotspot.piso.local/api"` | **defines** the option — on its own this sends nothing |
-| 4 | `/ip/dhcp-server/option/sets add …` then `option=captive-portal` | collects it into a *set* |
-| 5 | `/ip/dhcp-server set [find name=piso-guest-dhcp] option-set=…` | RouterOS only offers the set to clients of a server that carries it |
+| 3 | `/ip/dhcp-server/option add … code=114 value="'https://…'" force=yes` | **defines** the option — on its own this sends nothing |
+| 4 | `/ip/dhcp-server/option/sets add …` then `options=` | collects it into a *set* (plural!) |
+| 5 | `/ip/dhcp-server set [find name=piso-guest-dhcp] dhcp-option-set=…` | RouterOS only offers the set to clients of a server that carries it |
 | 6 | `/tool fetch … dst-path=hotspot/api.json` | the file the phone actually fetches |
 
 Step 5 is the one people miss, and it is why "the option is defined but the phone never gets
-it" is such a common report.
+it" is such a common report. Steps 1–2 also used to be left out on purpose, on the grounds that
+`ssl-certificate` might not exist on every firmware. That was over-cautious: it is part of
+`/ip/hotspot/profile` on RouterOS 7, and omitting it is what kept a phone from getting a portal URL.
 
-Steps 1–2 (`ssl-certificate` on the HotSpot profile) used to be left out of the script on the
-grounds that the property might not exist on every firmware. That turned out to be over-cautious:
-it is part of `/ip/hotspot/profile` on RouterOS 7, and leaving it out is what kept a phone from
-getting a working portal URL.
+### Four syntax traps, all confirmed on a real router
 
-⚠️ **The `on-error` wrapper does not protect this line.** `ssl-certificate=` is inside a `:do { }
-on-error={ }` block, which catches *runtime* failures only. An unknown property name is rejected
-by the **parser** while the line is read, before any block is entered, and it stops the whole
-import at that line with "expected end of command" — no `on-error` anywhere can catch that. So if
-your firmware rejects the property, the symptom is a half-applied import, not a warning.
+Every one of these was tried and rejected on a hAP ax lite running 7.24.4. They are recorded here
+because three of the four are *valid* names that mean the wrong thing — no amount of reading the
+manual reveals them, and three of them fail silently inside a script:
 
-Test that single line in the terminal before importing anything:
+| What you type | RouterOS says | The truth |
+| --- | --- | --- |
+| `value="https://…"` | `failure: Unknown data type!` | a bare string is not a data type; wrap it in single quotes **inside** the double quotes: `value="'https://…'"` |
+| `/certificate sign` | `failure: CA not found` | there is no CA on this router, and it is not needed — `/certificate add` already produces a self-signed certificate on RouterOS 7 |
+| `option=<name>` on the set menu | `failure: action cancelled` | the property is `options=`, **plural** |
+| `option-set=<name>` on the server | `bad parameter option-set` | the property is prefixed: `dhcp-option-set=` |
 
-```
-/ip/hotspot/profile set piso-profile ssl-certificate=piso-cert
-```
+The failure mode is nasty: because each of these aborts the surrounding block, a script with all
+four bugs looks as though it ran cleanly and simply sends nothing. Each step in the shipped
+script therefore carries its own `on-error`, so one refusal logs a warning naming that step
+instead of silently discarding the rest, and `check_rsc.py` fails on any of the four.
 
-If it is accepted, `/import` will accept it. If it errors, set `enableRfc8910` to `"no"` at the
-top of the script to skip the whole section, or delete just that one line — the plain `http://`
-redirect keeps working without it either way.
+⚠️ Note that a *parse* error (an unknown property name) is still not catchable — `on-error` handles
+runtime failures only. If the import stops with "expected end of command", type the offending line
+in the terminal on its own first; a line accepted there is accepted by `/import`.
 
 Check it landed:
 
 ```
-/ip/dhcp-server/option print                 (one row, code 114)
-/ip/dhcp-server/option/sets print            (piso-captive-set, option piso-captive-portal)
-/ip/dhcp-server print                        (piso-guest-dhcp has option-set)
+/ip/dhcp-server/option print                 (one row, code 114, raw-value shown)
+/ip/dhcp-server/option/sets print            (piso-captive-set, options piso-captive-portal)
+/ip/dhcp-server print                        (piso-guest-dhcp has dhcp-option-set)
 /ip/hotspot/profile print detail             (ssl-certificate)
 /file print where name~"hotspot"             (login.html AND api.json)
 ```

@@ -338,10 +338,33 @@
 # ---------------------------------------------------------------------------
 # RFC 8910 / DHCP option 114: what makes a phone open the portal by itself.
 #
-# Defining the option is NOT enough. It has to be collected into a SET and
-# that set attached to the guest DHCP server - skip any of the three steps and
-# the option never leaves the router, which is exactly the "no 114 in the DHCP
-# packet" symptom this section exists to fix.
+# Every command below was verified against a real hAP ax lite running 7.24.4,
+# where the first four attempts were all rejected. What the terminal taught:
+#
+#   /ip/dhcp-server/option add ... value="https://..."
+#       failure: Unknown data type!
+#     A bare string is not a data type. RouterOS wants a quoted string INSIDE
+#     the double quotes: value="'https://...'"  (single quotes, then double).
+#     Without them the option is refused and the whole section aborts.
+#
+#   /certificate sign <name>
+#       failure: CA not found
+#     /certificate add already produces a self-signed certificate on RouterOS 7.
+#     sign is only for issuing one from a CA, and there is no CA here.
+#
+#   /ip/dhcp-server/option/sets add ... option=<name>
+#       failure: action cancelled
+#     The property is PLURAL: options=, not option=.
+#
+#   /ip/dhcp-server set ... option-set=<name>
+#       bad parameter option-set
+#     The property is prefixed: dhcp-option-set=, not option-set=.
+#
+# force=yes sends the option even to a client that never asked for it in its
+# parameter request list, which is what a phone needs in order to receive it.
+#
+# Each step gets its own on-error so one refusal no longer discards the rest -
+# that is how a single bad line hid four problems behind one warning.
 #
 # https-redirect is deliberately NOT set: it would send the phone to the
 # RouterOS HTTPS login form instead of our own login.html, and that page is the
@@ -350,36 +373,63 @@
 :do {
 :local enableRfc8910 "yes"
 :if ($enableRfc8910 = "yes") do={
+# 1. the certificate. /certificate add is enough; it is already self-signed.
 :if ([:len [/certificate find where name=$hotspotCertName]] = 0) do={
+:do {
 /certificate add name=$hotspotCertName common-name=$hotspotDnsName days-valid=3650 key-usage=key-cert-sign,crl-sign,tls-server
-/certificate sign $hotspotCertName
+:log info ("PisoPilot: created " . $hotspotCertName)
+} on-error={
+:log warning ("PisoPilot: could not create " . $hotspotCertName)
 }
+}
+# 2. the option. The inner single quotes are what make it a string.
 :local captiveUrl ("https://" . $hotspotDnsName . "/api")
+:local captiveValue ("'" . $captiveUrl . "'")
 :if ([:len [/ip/dhcp-server/option find where code=114]] = 0) do={
-/ip/dhcp-server/option add name=$captiveOptionName code=114 value=$captiveUrl
-} else={
-/ip/dhcp-server/option set [find where code=114] name=$captiveOptionName value=$captiveUrl
-}
+:do {
+/ip/dhcp-server/option add name=$captiveOptionName code=114 value=$captiveValue force=yes
 :log info ("PisoPilot: DHCP option 114 advertises " . $captiveUrl)
+} on-error={
+:log warning ("PisoPilot: /ip/dhcp-server/option add refused code 114 - type this by hand: /ip/dhcp-server/option add name=piso-captive-portal code=114 value=\"'" . $captiveUrl . "'\" force=yes")
+}
+} else={
+:do {
+/ip/dhcp-server/option set [find where code=114] name=$captiveOptionName value=$captiveValue force=yes
+:log info ("PisoPilot: DHCP option 114 updated to " . $captiveUrl)
+} on-error={
+:log warning "PisoPilot: could not update the existing option 114"
+}
+}
+# 3. the HotSpot serves it over https.
+:do {
 /ip/hotspot/profile set [find where name=$hotspotProfile] ssl-certificate=$hotspotCertName
 :log info ("PisoPilot: HotSpot profile serves https using " . $hotspotCertName)
+} on-error={
+:log warning ("PisoPilot: this firmware refused ssl-certificate on the HotSpot profile - the phone will fall back to its own http:// probe. Test it with: /ip/hotspot/profile set " . $hotspotProfile . " ssl-certificate=" . $hotspotCertName)
+}
+# 4. the set. Note options=, plural.
 :if ([:len [/ip/dhcp-server/option/sets find where name=$captiveOptionSet]] = 0) do={
+:do {
 /ip/dhcp-server/option/sets add name=$captiveOptionSet
+} on-error={
+:log warning ("PisoPilot: could not create the option set " . $captiveOptionSet)
 }
-:if ([:len [/ip/dhcp-server/option/sets find where name=$captiveOptionSet and option=$captiveOptionName]] = 0) do={
-/ip/dhcp-server/option/sets set [find where name=$captiveOptionSet] option=$captiveOptionName
 }
-:if ([:len [/ip/dhcp-server/option/sets find where name=$captiveOptionSet and option=$captiveOptionName]]) do={
-/ip/dhcp-server set [find where name=$guestDhcpServer] option-set=$captiveOptionSet
+:do {
+/ip/dhcp-server/option/sets set [find where name=$captiveOptionSet] options=$captiveOptionName
+} on-error={
+:log warning ("PisoPilot: could not put " . $captiveOptionName . " into " . $captiveOptionSet)
+}
+# 5. attach it to the GUEST server only. Note the dhcp- prefix.
+:do {
+/ip/dhcp-server set [find where name=$guestDhcpServer] dhcp-option-set=$captiveOptionSet
 :log info ("PisoPilot: " . $guestDhcpServer . " now sends " . $captiveOptionSet . " (option 114)")
-} else={
-:log warning ("PisoPilot: could not add " . $captiveOptionName . " to " . $captiveOptionSet)
+} on-error={
+:log warning ("PisoPilot: could not attach the option set to " . $guestDhcpServer . " - this is the step that actually makes option 114 leave the router. By hand: /ip/dhcp-server set [find name=" . $guestDhcpServer . "] dhcp-option-set=" . $captiveOptionSet)
 }
 } else={
 :log info "PisoPilot: enableRfc8910 is not 'yes' - option 114 left alone"
 }
-} on-error={
-:log warning ("PisoPilot: option 114 section failed - the http:// redirect still works. Settle it by hand: /ip/dhcp-server/option print, /ip/dhcp-server/option/sets print, /ip/dhcp-server print where name=" . $guestDhcpServer)
 }
 /ip/service set www disabled=yes
 /ip/service set telnet disabled=yes
@@ -467,17 +517,18 @@
 :put "  /ipv6/firewall/filter add chain=forward in-interface=bridge-guest action=drop"
 :put "A line that is accepted in the terminal is also accepted by /import."
 :put ""
-:put "Option 114 (a phone that opens the portal by itself) needs all of these -"
-:put "defining the option alone sends NOTHING, which is the usual mistake:"
-:put "  /ip/dhcp-server/option print          (code 114, value https://<name>/api)"
-:put "  /ip/dhcp-server/option/sets print     (piso-captive-set holds piso-captive-portal)"
-:put "  /ip/dhcp-server print                 (piso-guest-dhcp has option-set)"
-:put "  /ip/hotspot/profile print detail      (ssl-certificate present)"
-:put "  /file print where name~\"hotspot\"      (login.html AND api.json)"
-:put ""
-:put "Those two steps live in their own on-error block, so if your firmware"
-:put "refuses ssl-certificate the import still completes and the plain http://"
-:put "redirect keeps working - the phone then just uses its own probe."
+:put "Option 114 (a phone that opens the portal by itself) needs ALL of these."
+:put "Four of them are traps - each was refused by a 7.24.4 router:"
+:put "  1. value=\"'https://.../api'\"   single quotes INSIDE the double quotes,"
+:put "     a bare string gives 'Unknown data type!'"
+:put "  2. no '/certificate sign'          no CA here - /certificate add is enough"
+:put "  3. option/sets set ... options=    plural, 'option=' is cancelled"
+:put "  4. dhcp-server set ... dhcp-option-set=   NOT 'option-set='"
+:put "Verify with:"
+:put "  /ip/dhcp-server/option print       (code 114, raw-value shown)"
+:put "  /ip/dhcp-server/option/sets print  (piso-captive-set holds options)"
+:put "  /ip/dhcp-server print              (piso-guest-dhcp has dhcp-option-set)"
+:put "  /log print where message~\"PisoPilot\""
 :put ""
 :put "Quickest end-to-end check, as an unpaid phone:"
 :put "  1. join the SSID and open any http:// page  -> the PisoPilot portal"
