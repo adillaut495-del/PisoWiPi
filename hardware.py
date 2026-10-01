@@ -323,12 +323,25 @@ def coin_listener_state():
 
 
 def hardware_status():
+    """The four links on the dashboard.
+
+    "controller" used to be a copy of the coin acceptor's state, which made the
+    dashboard report Controller Offline whenever the acceptor was not running -
+    two unrelated things sharing one value. The controller is the router adapter,
+    so it is judged on its own: reachable in real mode, and deliberately not
+    driving anything otherwise. The dashboard then shows Simulation for that,
+    which is the truth, rather than a red Offline that looks like a fault.
+    """
     router = router_adapter.health()
     state = coin_listener_state()
+    if not real_mode():
+        controller = "simulated"
+    else:
+        controller = "online" if router.get("status") == "online" else "offline"
     return {
         "mode": router_adapter.config.mode,
         "coin_acceptor": state,
-        "controller": state,
+        "controller": controller,
         "gateway": router.get("status", "offline"),
         "router": router,
     }
