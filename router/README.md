@@ -312,8 +312,8 @@ Drop one coin of each denomination and write down the pulse counts. Update
 | --- | --- |
 | **The wired computer lost its internet** | The HotSpot is bound to the wrong interface. A HotSpot covers a whole interface, so `/ip/hotspot print` must show `bridge-guest`; if it shows `bridge`, every ether2-4 machine is behind the login page. Re-import the `.rsc` (it pushes the interface back on every run), or by hand: `/ip/hotspot set [find name=piso-hotspot] interface=bridge-guest` and then `/interface/bridge/port set [find where interface=wifi1] bridge=bridge-guest`. A computer that joins the **SSID** is still gated on purpose — plug it into ether2-4, or bypass its MAC with `/ip/hotspot/ip-binding add type=bypassed mac-address=<its MAC>` |
 | **Blocked, but never redirected to the portal** | `/ip/hotspot/walled-garden print` must list the Pi and **nothing else**. A walled-garden entry for the login page name — or a `dns-name` that resolves to the Pi — exempts that name from interception, so the phone is sent to a host with no port 80 open instead of being served `hotspot/login.html`. `dns-name` on the profile has to answer with the router (`/ip/dns/static print`) |
-| **Phone says "no internet" and never prompts** | Open a plain `http://` page: a HotSpot intercepts port 80 only, so an https-only browser just gets a connection reset. The phone opens the portal by itself only when RouterOS can send the RFC 7710 DHCP option, which needs `ssl-certificate` plus a trusted certificate on the profile — see the note printed at the end of the `.rsc` |
-| **Phone joins the SSID and already has internet, no portal** | The portal is not enforcing. Run `python router/check_rsc.py` on the laptop, re-import the `.rsc`, then confirm on the router: `/ip/firewall/filter print` (the four `PisoPilot:` rules, all scoped to `bridge-guest`, ordered `established,related` → walled garden → walled garden → drop, plus the **dynamic** `D` `hs-unauth` jumps the HotSpot adds itself) and `/ipv6/address print` (nothing global advertised on `bridge-guest`). Sections 8b/8c exist for exactly this |
+| **Phone says "no internet" and never prompts** | Open a plain `http://` page: a HotSpot intercepts port 80 only, so an https-only browser just gets a connection reset. If the prompt still never appears, work through **section 8b** — DHCP option 114 needs a HotSpot DNS name, the option defined, `api.json`, *and* a certificate the phone trusts, and the certificate is usually the piece that cannot be fixed on a local-only network |
+| **Phone joins the SSID and already has internet, no portal** | The portal is not enforcing. Run `python router/check_rsc.py` on the laptop, re-import the `.rsc`, then confirm on the router: `/ip/firewall/filter print` (the four `PisoPilot:` rules, all scoped to `bridge-guest`, ordered `established,related` → walled garden → walled garden → drop, plus the **dynamic** `D` `hs-unauth` jumps the HotSpot adds itself) and `/ipv6/address print` (nothing global advertised on `bridge-guest`). If both of those look right, work through the rows below |
 | **Phone has no internet even after paying** | The drop is above the walled-garden accepts, or `hotspot=!auth` matched a paying device. Check the order in `/ip/firewall/filter print` and `/ip/hotspot/active print` — a paying device must be listed there |
 | Blocked, and the portal never loads either | A forward drop sits above the walled-garden accept. The HotSpot evaluates the walled garden in `hs-unauth` with `action=return`, which hands the packet back to the forward chain, so the portal accept has to be higher up than the drop |
 | App never listens on 5000 (nothing is served at all) | `start_hardware()` runs **before** `app.run()` in `app.py`, so a coin-pin failure takes the whole portal down — and then the router's `login.html` fetch has nothing to download. The usual cause on Bookworm is no GPIO backend inside the venv: `PinFactoryFallback: No module named 'lgpio'` / `'RPi'`, then `KeyError: 17` and `OSError: [Errno 22] Invalid argument` from `/sys/class/gpio`, which modern kernels no longer provide. Fix the venv (`sudo apt install -y python3-lgpio`, then `python3 -m venv --system-site-packages .venv`, or `pip install rpi-lgpio`), or set `PISO_HARDWARE_MODE=simulation` to bring the portal up before the acceptor is wired. Confirm with `python -c "import gpiozero, lgpio"`. A claimed-pin failure now logs and keeps serving instead of exiting |
@@ -333,6 +333,53 @@ Drop one coin of each denomination and write down the pulse counts. Update
 | Every coin counts twice | `PISO_DEBUG=0` and only one `app.py` process (`pgrep -af app.py`) |
 | Coins ignored or the wrong value | Re-run the pulse probe; check `PISO_COIN_PULSES` and the acceptor's `P1..P4` pulse programming |
 | Devices get cut off too soon | Raise `keepalive-timeout` on the user profile. `limit-uptime` counts only connected time, so a phone that stays off does not spend its minutes |
+
+## 8b. RFC 7710 (DHCP option 114): why a phone may not open the portal by itself
+
+DHCP option 114 is how a HotSpot tells a client "you are behind a captive portal and its API
+lives here", so the phone opens the portal with no typing at all. It is **optional**: every
+device still falls back to probing a plain HTTP address, and on a piso build that fallback is
+what actually makes the portal appear. Treat this as polish, not as the gate.
+
+RouterOS will only advertise option 114 when **all four** of these hold:
+
+| Requirement | Where | On a stock piso build |
+| --- | --- | --- |
+| a HotSpot DNS name | `/ip/hotspot/profile dns-name` | set by the script (`hotspot.piso.local`), and it must resolve to the **router** |
+| a certificate the client will trust | profile SSL certificate + `www-ssl` | usually the blocker — see below |
+| the option defined with `code=114` | `/ip/dhcp-server/option` | **not** set by default |
+| `api.json` to answer the probe | `/file` → `hotspot/api.json` | absent unless the HotSpot laid down its full HTML set |
+
+Nothing sends option 114 until you define it *and* attach it to the guest scope:
+
+```
+/ip/dhcp-server/option add name=captive-portal code=114 value="https://hotspot.piso.local/api" force=yes
+/ip/dhcp-server/option/sets add name=piso-option-set option=captive-portal
+/ip/dhcp-server set [find name=piso-guest-dhcp] option-set=piso-option-set
+```
+
+Type each line in the terminal before putting it in a script: an unknown property is a parse
+error that stops the whole import at that line.
+
+### The certificate is the part that usually cannot be fixed
+
+A phone only acts on option 114 when the certificate it finds at that URL is one it trusts. That
+means one issued by a public CA, which in turn means a real public DNS name whose record points
+at the router. `piso-cert` is self-signed, and `hotspot.piso.local` exists only inside your own
+network, so a client will normally reject it. Even a genuinely valid certificate is hard to check
+from behind a captive portal, because the client cannot reach OCSP or NTP until it is already
+online — the chicken-and-egg problem the MikroTik forum threads on this feature keep hitting.
+
+So on a piso build, expect the client's own HTTP probe to be what shows the portal:
+
+* Android asks for `http://connectivitycheck.gstatic.com/generate_204`
+* Apple asks for `http://captive.apple.com/hotspot-detect.html`
+* Windows asks for `http://www.msftconnecttest.com/connecttest.txt`
+
+The HotSpot intercepts all of them on port 80 and answers with the login page, so the OS sees a
+redirect instead of the response it expected and shows "Sign in to network". No certificate is
+involved. It is also exactly why a customer who only ever types `https://` addresses sees
+nothing: a HotSpot intercepts port 80 only.
 
 ## 9. Everyday operations
 

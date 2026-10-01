@@ -168,21 +168,44 @@ def main(argv=None) -> int:
         row for row in profiles if str(row.get("name")) in {str(server.get("profile")) for server in servers}
     ] or profiles
 
-    # api.json is what a phone fetches to pop the portal open by itself. RouterOS
-    # only publishes it when the profile can also serve the login page over HTTPS
-    # (RFC 7710 wants ssl-certificate), so on firmware without that property
-    # api.json is unreachable by design - failing the check for it would be a
-    # permanent red mark against a setting nobody can change.
+    # Do NOT infer what the profile supports from the REST body: RouterOS only
+    # returns properties that have been set, so an absent key proves nothing about
+    # the firmware. Print what really came back and let the operator diff it
+    # against /ip/hotspot/profile print detail on the router.
+    for entry in live_profiles:
+        keys = ", ".join(sorted(str(key) for key in entry if not str(key).startswith(".")))
+        report.note("profile '" + str(entry.get("name")) + "' keys over REST: " + keys)
+
+    # RFC 7710/8910 (DHCP option 114) is what lets a phone open the portal by
+    # itself, and it takes four things, not one: a HotSpot dns-name, a certificate
+    # the client will actually trust, the option defined, and api.json to answer it.
     api = next((item for item in files if str(item.get("name", "")).endswith("hotspot/api.json")), None)
-    if any("ssl-certificate" in row for row in live_profiles):
-        report.check("hotspot/api.json is installed (RFC 7710 self-opening portal)", api is not None)
-    elif api is None:
-        report.note("hotspot/api.json is absent, which is expected here: with no ssl-certificate on")
-        report.note("the profile RouterOS cannot send the RFC 7710 DHCP option, so there is nothing")
-        report.note("for api.json to advertise. Customers open a plain http:// address instead.")
-    else:
-        report.note("hotspot/api.json exists but the profile has no ssl-certificate, so a phone")
-        report.note("still will not auto-open the portal. A plain http:// address works.")
+    options, _, _ = timed(adapter._request, "GET", "ip/dhcp-server/option")
+    options = options if isinstance(options, list) else ([options] if options else [])
+    option_114 = next((row for row in options if str(row.get("code")) == "114"), None)
+    dhcp_servers, _, _ = timed(adapter._request, "GET", "ip/dhcp-server")
+    dhcp_servers = dhcp_servers if isinstance(dhcp_servers, list) else ([dhcp_servers] if dhcp_servers else [])
+    carrying = [str(row.get("name")) for row in dhcp_servers if str(row.get("option-set", ""))]
+
+    report.check(
+        "DHCP option 114 is defined (RFC 8910 captive-portal URL)",
+        option_114 is not None,
+        "value=" + str(option_114.get("value")) if option_114 else "not defined, so no client is ever pointed at the portal",
+    )
+    report.check(
+        "a DHCP server actually sends an option set",
+        bool(carrying),
+        ", ".join(carrying) if carrying else "no server has option-set set, so option 114 would never leave the router",
+    )
+    report.check(
+        "hotspot/api.json answers the option 114 probe",
+        api is not None,
+        "installed" if api is not None else "absent, so that probe would get a 404",
+    )
+    report.note("a phone only acts on option 114 if the certificate it finds at that")
+    report.note("URL is one it trusts. A self-signed certificate on a local-only name")
+    report.note("normally fails that check, so the http:// redirect stays the reliable")
+    report.note("path. See the RFC 7710 section in README.md.")
 
     addresses, _, _ = timed(adapter._request, "GET", "ip/address")
     addresses = addresses if isinstance(addresses, list) else ([addresses] if addresses else [])
@@ -203,18 +226,19 @@ def main(argv=None) -> int:
             report.note("this is what stops the redirect: RouterOS builds the login page URL from")
             report.note("dns-name, so it has to point at the router, never at the Pi")
         report.note(
-            "profile '{}': hotspot-address={} https-redirect={} ssl-certificate={}".format(
-                profile_name,
-                entry.get("hotspot-address"),
-                entry.get("https-redirect", "not exposed"),
-                entry.get("ssl-certificate", "not exposed"),
-            )
+            "profile '" + profile_name + "': hotspot-address=" + str(entry.get("hotspot-address"))
+            + " ssl-certificate=" + str(entry.get("ssl-certificate") or "unset")
         )
         if "ssl-certificate" not in entry:
-            report.note("this firmware does not expose 'ssl-certificate' on the HotSpot profile,")
-            report.note("so the RFC 7710 DHCP option is unavailable and a phone will not open")
-            report.note("the portal by itself. Type a plain http:// address instead.")
-            report.note("Confirm on the router with: /ip/hotspot/profile print detail")
+            # Absent here does NOT mean the firmware lacks the property: RouterOS
+            # omits keys that sit at their default, which is how http-cookie-lifetime
+            # and use-radius disappear from this same profile. The router terminal is
+            # the only authority.
+            report.note("'ssl-certificate' is missing from the REST body, but that only means it is")
+            report.note("unset - RouterOS hides default-valued keys. Settle it on the router with:")
+            report.note("  /ip/hotspot/profile print detail")
+            report.note("and if it is there, put the HTTPS login behind a real certificate:")
+            report.note("  /ip/hotspot/profile set " + profile_name + " ssl-certificate=piso-cert")
     print()
 
 
