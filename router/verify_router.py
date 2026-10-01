@@ -118,7 +118,73 @@ def main(argv=None) -> int:
             report.note(f"mac_for_ip({sample.get('address')}) -> {adapter.mac_for_ip(sample.get('address'))}")
     print()
 
-    print("3. What app.py does when a customer pays")
+    print("3. Captive portal redirect")
+    ports, _, error = timed(adapter._request, "GET", "interface/bridge/port")
+    ports = ports if isinstance(ports, list) else ([ports] if ports else [])
+    for entry in servers:
+        interface = str(entry.get("interface"))
+        wired = [
+            str(port.get("interface"))
+            for port in ports
+            if str(port.get("bridge")) == interface and str(port.get("interface", "")).startswith("ether")
+        ]
+        report.check(
+            "HotSpot interface '" + interface + "' carries no wired port",
+            not wired,
+            "behind the portal: " + ", ".join(wired) if wired else "wireless only - the wired LAN keeps its internet",
+        )
+    if error is not None:
+        report.note("could not read /rest/interface/bridge/port: " + str(error))
+
+    files, _, error = timed(adapter._request, "GET", "file")
+    files = files if isinstance(files, list) else ([files] if files else [])
+    page = next((item for item in files if str(item.get("name", "")).endswith("hotspot/login.html")), None)
+    page_size = int(page.get("size") or 0) if page else 0
+    report.check(
+        "hotspot/login.html is installed (what a blocked phone is served)",
+        page_size > 500,
+        str(page_size) + " bytes" if page else "MISSING - the customer gets the RouterOS login form",
+    )
+    if page_size <= 500:
+        report.note('fix it from the router terminal: /tool fetch url="http://<pi-ip>:5000/hotspot/login.html" dst-path=hotspot/login.html')
+    api = next((item for item in files if str(item.get("name", "")).endswith("hotspot/api.json")), None)
+    report.check("hotspot/api.json is installed (RFC 7710 self-opening portal)", api is not None)
+
+    addresses, _, _ = timed(adapter._request, "GET", "ip/address")
+    addresses = addresses if isinstance(addresses, list) else ([addresses] if addresses else [])
+    router_ips = {str(item.get("address", "")).split("/")[0] for item in addresses}
+    static, _, _ = timed(adapter._request, "GET", "ip/dns/static")
+    static = static if isinstance(static, list) else ([static] if static else [])
+    for entry in profiles:
+        profile_name = str(entry.get("name"))
+        dns_name = str(entry.get("dns-name", ""))
+        if not dns_name:
+            report.check("profile '" + profile_name + "' sets dns-name", False, "empty - the login URL falls back to the HotSpot address")
+            continue
+        record = next((row for row in static if str(row.get("name")) == dns_name), None)
+        answer = str(record.get("address", "")) if record else ""
+        detail = answer or "no static DNS record"
+        report.check("dns-name '" + dns_name + "' answers with the router", answer in router_ips, "-> " + detail)
+        if answer and answer not in router_ips:
+            report.note("this is what stops the redirect: RouterOS builds the login page URL from")
+            report.note("dns-name, so it has to point at the router, never at the Pi")
+        report.note(
+            "profile '{}': hotspot-address={} https-redirect={} ssl-certificate={}".format(
+                profile_name,
+                entry.get("hotspot-address"),
+                entry.get("https-redirect", "not exposed"),
+                entry.get("ssl-certificate", "not exposed"),
+            )
+        )
+        if "ssl-certificate" not in entry:
+            report.note("ssl-certificate is not exposed on this RouterOS, so the RFC 7710 DHCP")
+            report.note("option is off and a modern phone will not open the portal by itself.")
+            report.note("Test the line on your own router first, then add it:")
+            report.note("  /ip/hotspot/profile set " + profile_name + " ssl-certificate=piso-cert")
+    print()
+
+
+    print("4. What app.py does when a customer pays")
     if args.no_write:
         report.note("skipped (--no-write)")
     else:
@@ -135,7 +201,7 @@ def main(argv=None) -> int:
             report.check("no test user left behind", leftover is None)
     print()
 
-    print("4. Per-session QoS mapping")
+    print("5. Per-session QoS mapping")
     for download, upload in ((2, 1), (5, 2), (9, 9)):
         report.note(f"{download} Mbps down / {upload} Mbps up -> {adapter.rate_profile(download, upload)}")
     print()

@@ -1,5 +1,4 @@
 __pycache__/
 *.py[cod]
 .venv/
-piso_wifi.db
-.env
+piso_wifi.db 

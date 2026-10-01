@@ -16,12 +16,14 @@ and the Allan coin acceptor that takes the money.
         ISP cable
             |
         [ether1]
-   MikroTik hAP ax lite  (192.168.88.1, HotSpot gateway, DHCP, NAT)
-        |        \
-     [ether2]     \  wifi "A2N Piso WiFi"
-        |          \
-  [Raspberry Pi 3B]  phones / laptops  --- join the SSID, get the captive portal
-   192.168.88.2
+   MikroTik hAP ax lite
+        |                     \
+   bridge (192.168.88.1)   bridge-guest (192.168.90.1)
+        |                     \
+     [ether2]                 \  wifi "A2N Piso WiFi"
+        |                      \
+  [Raspberry Pi 3B]       phones / laptops  --- join the SSID, get the captive portal
+   192.168.88.2           192.168.90.x
    app.py :5000  (console + /portal)
         |
    GPIO17  <-- pulse line (optocoupler) <-- Allan 1239A coin slot  <-- 12 V PSU
@@ -141,15 +143,20 @@ countdown; press the listed button or power-cycle during it):
 4. Watch the log for `PisoPilot: setup finished`, then check the pieces:
 
 ```
-/ip/hotspot print              # piso-hotspot on "bridge"
-/ip/hotspot/profile print      # login-by=mac,http-chap,cookie,mac-cookie
+/ip/hotspot print              # piso-hotspot on "bridge-guest" ONLY. If this says
+                               #   "bridge", the wired LAN is behind the login page
+/ip/hotspot/profile print      # login-by=mac,http-chap,cookie,mac-cookie; dns-name
+                               #   must be the HotSpot's own name, never the Pi's
 /ip/hotspot/user/profile print # piso-package (1M/2M), piso-premium (2M/5M)
 /ip/hotspot/walled-garden print
 /ip/hotspot/walled-garden/ip print
 /ip/hotspot/ip-binding print   # the Pi is "bypassed"
-/ip/dhcp-server print          # piso-dhcp on "bridge", factory dhcp1 disabled
-/ip/dhcp-server/network print  # 192.168.88.0/24 -> gateway + DNS 192.168.88.1
-/ip/dns/static print           # portal.piso.local -> 192.168.88.2
+/ip/dhcp-server print          # piso-dhcp on "bridge" (wired), piso-guest-dhcp on
+                               #   "bridge-guest" (guests), factory servers disabled
+/ip/dhcp-server/network print  # 192.168.88.0/24 -> 192.168.88.1, 192.168.90.0/24
+                               #   -> 192.168.90.1
+/ip/dns/static print           # portal.piso.local -> 192.168.88.2 (the Pi)
+                               #   hotspot.piso.local -> 192.168.90.1 (the router)
 /user print                    # piso-controller
 /ip/service print              # www-ssl enabled, www/telnet/ftp disabled
 ```
@@ -164,6 +171,10 @@ countdown; press the listed button or power-cycle during it):
 
 * It never removes your firewall filter rules, NAT rules or existing hotspot
   users — it only adds what is missing and re-applies its own settings.
+* It does not gate the wired LAN. The SSID lives on its own `bridge-guest` and
+  the HotSpot is bound to that bridge only, because a HotSpot covers a whole
+  interface: on the shared `bridge` the desk computer and the console laptop sat
+  behind the customer login page too. Only 192.168.90.0/24 needs a coin.
 * The one thing it *disables* is any other DHCP server already listening on
   `bridge` (the factory `dhcp1`), because RouterOS allows only one
   directly-connected DHCP server per interface and `piso-dhcp` needs to own the
@@ -289,12 +300,22 @@ Drop one coin of each denomination and write down the pulse counts. Update
 
 | Symptom | What to check |
 | --- | --- |
+| **The wired computer lost its internet** | The HotSpot is bound to the wrong interface. A HotSpot covers a whole interface, so `/ip/hotspot print` must show `bridge-guest`; if it shows `bridge`, every ether2-4 machine is behind the login page. Re-import the `.rsc` (it pushes the interface back on every run), or by hand: `/ip/hotspot set [find name=piso-hotspot] interface=bridge-guest` and then `/interface/bridge/port set [find where interface=wifi1] bridge=bridge-guest`. A computer that joins the **SSID** is still gated on purpose — plug it into ether2-4, or bypass its MAC with `/ip/hotspot/ip-binding add type=bypassed mac-address=<its MAC>` |
+| **Blocked, but never redirected to the portal** | `/ip/hotspot/walled-garden print` must list the Pi and **nothing else**. A walled-garden entry for the login page name — or a `dns-name` that resolves to the Pi — exempts that name from interception, so the phone is sent to a host with no port 80 open instead of being served `hotspot/login.html`. `dns-name` on the profile has to answer with the router (`/ip/dns/static print`) |
+| **Phone says "no internet" and never prompts** | Open a plain `http://` page: a HotSpot intercepts port 80 only, so an https-only browser just gets a connection reset. The phone opens the portal by itself only when RouterOS can send the RFC 7710 DHCP option, which needs `ssl-certificate` plus a trusted certificate on the profile — see the note printed at the end of the `.rsc` |
+| **Phone joins the SSID and already has internet, no portal** | The portal is not enforcing. Run `python router/check_rsc.py` on the laptop, re-import the `.rsc`, then confirm on the router: `/ip/firewall/filter print` (the four `PisoPilot:` rules, all scoped to `bridge-guest`, ordered `established,related` → walled garden → walled garden → drop, plus the **dynamic** `D` `hs-unauth` jumps the HotSpot adds itself) and `/ipv6/address print` (nothing global advertised on `bridge-guest`). Sections 8b/8c exist for exactly this |
+| **Phone has no internet even after paying** | The drop is above the walled-garden accepts, or `hotspot=!auth` matched a paying device. Check the order in `/ip/firewall/filter print` and `/ip/hotspot/active print` — a paying device must be listed there |
+| Blocked, and the portal never loads either | A forward drop sits above the walled-garden accept. The HotSpot evaluates the walled garden in `hs-unauth` with `action=return`, which hands the packet back to the forward chain, so the portal accept has to be higher up than the drop |
+| RouterOS login form instead of the portal | The `login.html` fetch failed. `/tool fetch` does **not** raise a script error when a download fails, so the import reports success regardless — check the log for `PisoPilot: hotspot/login.html is only 0 bytes`, then re-run: `/tool fetch url="http://192.168.88.2:5000/hotspot/login.html" dst-path=hotspot/login.html`, and enable `fetch` in device-mode |
 | Portal never loads on the phone | `/ip/hotspot/walled-garden/ip print` must show the Pi. From the router: `/tool ping 192.168.88.2 count=2` |
-| RouterOS login form instead of the portal | The `login.html` fetch failed. From the router: `/tool fetch url="http://192.168.88.2:5000/hotspot/login.html" dst-path=hotspot/login.html`, and enable `fetch` in device-mode |
+| Phone browses, portal ignored, IPv6 suspected | A HotSpot is IPv4 only — its NAT interception has no IPv6 equivalent. If the phone got a global IPv6 it walks straight past the portal. `/ipv6/address print` must show no `advertise=yes` on `bridge-guest`; `/ipv6/firewall/filter print where comment="PisoPilot: no IPv6 for customers"` must list the drop |
+| `/ip/hotspot` is greyed out in WinBox | Restricted device mode: `/system/device-mode set hotspot=yes fetch=yes`. The script does this in section 4b, but a later factory reset puts it back |
 | Hardware links show `offline` | Wrong URL/user/password, or `www-ssl` is off. Test from the Pi: `curl -k -u piso-controller:<password> https://192.168.88.1/rest/system/resource` |
 | `401` in the console log | `PISO_ROUTER_PASSWORD` does not match the router user |
 | `unknown parameter` in the log | RouterOS rejected a field; update the unit, then re-run `verify_router.py` |
-| `Script Error: expected end of command (line N column M)` | The import stops at the first token it cannot parse, so fix that one line and import again. It is usually a `#` comment trailing a command (move the comment to its own line, or end the command with `;` first) |
+| `Script Error: expected end of command (line N column M)` | The import stops at the first token it cannot parse, so fix that one line and import again. The column points at the offending token. In order of how often it bites: (1) **a property the menu does not accept** — RouterOS rejects the token while reading the line, so the surrounding `on-error` block never gets a chance to run; (2) **two commands on one line** — RouterOS ends a statement at the newline, so a line like `/ip/hotspot add ... login-timeout=1m } /ip/hotspot set [find ...]` fails on the `[` of the second command: give every statement its own line; (3) a `#` comment trailing a command (RouterOS ends the command at the newline) — move the comment to its own line or end the command with `;` first; (4) a parameter the menu does not accept, e.g. `comment=` on `/ip/hotspot/profile` |
+| You hit a parse error twice on the same line | Don't guess the property name a third time — delete the optional step. This happened with `/ipv6/nd/prefix`, where both `disable-advertise=yes` and `advertise=no` were rejected at the same column. The step was belt-and-braces and is now gone: with `advertise=no` on the bridge address the router sends no router advertisements, so there is no prefix left to re-advertise |
+| Want to check a property name before trusting it | Print the menu on your own router and read the real names: `/ipv6/nd/prefix print detail`, `/ipv6/address print detail`, `/interface/wifi print detail`. A line that is accepted in the terminal is also accepted by `/import`, so the summary printed at the end of the script lists the version-sensitive ones to try first |
 | The import stops on the SSID/WPA2 line | RouterOS **7.13** moved the SSID and the radio security into the interface sub-objects, so the script sets `configuration.ssid`, `security.authentication-types` and `security.passphrase`. On older firmware set the SSID and password by hand in WinBox → *WiFi*, or upgrade to 7.13+ |
 | Phone pays but stays blocked | `/ip/hotspot/user print` should list the MAC. If not, the console could not resolve the client MAC — check `/ip/hotspot/host print` and how the phone reaches the portal |
 | Phone pays but has no internet | Check `/ip/hotspot/active print` (uptime climbing), then the upstream: `/ip/dhcp-client print` |
