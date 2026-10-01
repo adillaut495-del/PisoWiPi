@@ -43,6 +43,12 @@
  
 :local apiPassword "9g3zu9g9LQet8HdU1viZ"
 :local certName "piso-cert"
+# RFC 8910 (option 114) needs its own certificate whose name matches the HotSpot
+# dns-name, NOT the router's management cert: the phone checks that the certificate
+# served at https://hotspot.piso.local/api belongs to hotspot.piso.local.
+:local hotspotCertName "piso-hotspot-cert"
+:local captiveOptionName "piso-captive-portal"
+:local captiveOptionSet "piso-captive-set"
 
 :log info ("PisoPilot: setup started for SSID " . $ssid)
  
@@ -329,6 +335,52 @@
 :log warning "PisoPilot: HTTPS section failed - check /certificate print, then run: /ip/service set www-ssl certificate=piso-cert disabled=no"
 }
  
+# ---------------------------------------------------------------------------
+# RFC 8910 / DHCP option 114: what makes a phone open the portal by itself.
+#
+# Defining the option is NOT enough. It has to be collected into a SET and
+# that set attached to the guest DHCP server - skip any of the three steps and
+# the option never leaves the router, which is exactly the "no 114 in the DHCP
+# packet" symptom this section exists to fix.
+#
+# https-redirect is deliberately NOT set: it would send the phone to the
+# RouterOS HTTPS login form instead of our own login.html, and that page is the
+# one which hands the customer to the portal.
+# ---------------------------------------------------------------------------
+:do {
+:local enableRfc8910 "yes"
+:if ($enableRfc8910 = "yes") do={
+:if ([:len [/certificate find where name=$hotspotCertName]] = 0) do={
+/certificate add name=$hotspotCertName common-name=$hotspotDnsName days-valid=3650 key-usage=key-cert-sign,crl-sign,tls-server
+/certificate sign $hotspotCertName
+}
+:local captiveUrl ("https://" . $hotspotDnsName . "/api")
+:if ([:len [/ip/dhcp-server/option find where code=114]] = 0) do={
+/ip/dhcp-server/option add name=$captiveOptionName code=114 value=$captiveUrl
+} else={
+/ip/dhcp-server/option set [find where code=114] name=$captiveOptionName value=$captiveUrl
+}
+:log info ("PisoPilot: DHCP option 114 advertises " . $captiveUrl)
+/ip/hotspot/profile set [find where name=$hotspotProfile] ssl-certificate=$hotspotCertName
+:log info ("PisoPilot: HotSpot profile serves https using " . $hotspotCertName)
+:if ([:len [/ip/dhcp-server/option/sets find where name=$captiveOptionSet]] = 0) do={
+/ip/dhcp-server/option/sets add name=$captiveOptionSet
+}
+:if ([:len [/ip/dhcp-server/option/sets find where name=$captiveOptionSet and option=$captiveOptionName]] = 0) do={
+/ip/dhcp-server/option/sets set [find where name=$captiveOptionSet] option=$captiveOptionName
+}
+:if ([:len [/ip/dhcp-server/option/sets find where name=$captiveOptionSet and option=$captiveOptionName]]) do={
+/ip/dhcp-server set [find where name=$guestDhcpServer] option-set=$captiveOptionSet
+:log info ("PisoPilot: " . $guestDhcpServer . " now sends " . $captiveOptionSet . " (option 114)")
+} else={
+:log warning ("PisoPilot: could not add " . $captiveOptionName . " to " . $captiveOptionSet)
+}
+} else={
+:log info "PisoPilot: enableRfc8910 is not 'yes' - option 114 left alone"
+}
+} on-error={
+:log warning ("PisoPilot: option 114 section failed - the http:// redirect still works. Settle it by hand: /ip/dhcp-server/option print, /ip/dhcp-server/option/sets print, /ip/dhcp-server print where name=" . $guestDhcpServer)
+}
 /ip/service set www disabled=yes
 /ip/service set telnet disabled=yes
 /ip/service set ftp disabled=yes
@@ -350,6 +402,27 @@
 }
 } on-error={
 :log warning ("PisoPilot: could not fetch login.html - start app.py, then re-run: /tool fetch url=http://" . $portalIp . ":" . $portalPort . "/hotspot/login.html dst-path=hotspot/login.html")
+}
+
+# api.json answers the option 114 probe. Missing it does not break the phone -
+# the option points at a URL that would 404 - but the client then has nothing to
+# open, so it falls back to the plain http:// probe.
+:do {
+/tool fetch url=("http://" . $portalIp . ":" . $portalPort . "/hotspot/api.json") dst-path="hotspot/api.json"
+:local apiFile [/file find where name="hotspot/api.json"]
+:if ([:len $apiFile] = 0) do={
+:log warning ("PisoPilot: hotspot/api.json is missing - start app.py, then re-run: /tool fetch url=http://" . $portalIp . ":" . $portalPort . "/hotspot/api.json dst-path=hotspot/api.json")
+} else={
+:local apiFileId [:pick $apiFile 0]
+:local apiSize [/file get $apiFileId size]
+:if ($apiSize > 10) do={
+:log info ("PisoPilot: option 114 descriptor installed (" . $apiSize . " bytes)")
+} else={
+:log warning ("PisoPilot: hotspot/api.json is only " . $apiSize . " bytes - it did not download")
+}
+}
+} on-error={
+:log warning "PisoPilot: could not fetch api.json - start app.py, then re-run the /tool fetch for hotspot/api.json"
 }
  
 :log info "PisoPilot: setup finished"
@@ -392,15 +465,19 @@
 :put "  /ipv6/address set [find where interface=bridge-guest] advertise=no"
 :put "  /system/device-mode set hotspot=yes fetch=yes"
 :put "  /ipv6/firewall/filter add chain=forward in-interface=bridge-guest action=drop"
-:put "  /ip/hotspot/profile set piso-profile https-redirect=yes"
-:put "  /ip/hotspot/profile set piso-profile ssl-certificate=piso-cert"
 :put "A line that is accepted in the terminal is also accepted by /import."
 :put ""
-:put "Those last two stay out of the body of this script on purpose: they are"
-:put "version-sensitive, and an unknown property name is a parse error that kills"
-:put "the whole import. ssl-certificate (with a trusted certificate) is what lets"
-:put "RouterOS send the RFC 7710 DHCP option that makes a modern phone pop the"
-:put "portal open by itself. Neither is needed for the http:// redirect to work."
+:put "Option 114 (a phone that opens the portal by itself) needs all of these -"
+:put "defining the option alone sends NOTHING, which is the usual mistake:"
+:put "  /ip/dhcp-server/option print          (code 114, value https://<name>/api)"
+:put "  /ip/dhcp-server/option/sets print     (piso-captive-set holds piso-captive-portal)"
+:put "  /ip/dhcp-server print                 (piso-guest-dhcp has option-set)"
+:put "  /ip/hotspot/profile print detail      (ssl-certificate present)"
+:put "  /file print where name~\"hotspot\"      (login.html AND api.json)"
+:put ""
+:put "Those two steps live in their own on-error block, so if your firmware"
+:put "refuses ssl-certificate the import still completes and the plain http://"
+:put "redirect keeps working - the phone then just uses its own probe."
 :put ""
 :put "Quickest end-to-end check, as an unpaid phone:"
 :put "  1. join the SSID and open any http:// page  -> the PisoPilot portal"

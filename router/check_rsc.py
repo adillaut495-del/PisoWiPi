@@ -47,7 +47,20 @@ KNOWN_PROPERTIES: dict[str, set[str]] = {
     },
     "/ip/address": {"address", "interface", "comment"},
     "/ip/pool": {"name", "ranges", "comment"},
-    "/ip/dhcp-server": {"name", "interface", "address-pool", "lease-time", "disabled", "comment"},
+    "/ip/dhcp-server": {
+        "name",
+        "interface",
+        "address-pool",
+        "lease-time",
+        "disabled",
+        "comment",
+        "option-set",
+    },
+    # RFC 8910 / option 114. "option-sets" is the SET menu and its property is
+    # singular "option"; a plural here would be a parse error that stops the
+    # import before the set is ever attached to the guest DHCP server.
+    "/ip/dhcp-server/option": {"name", "code", "value", "force", "comment"},
+    "/ip/dhcp-server/option/sets": {"name", "option", "comment"},
     "/ip/dhcp-server/network": {"address", "gateway", "dns-server", "netmask", "comment"},
     "/ip/dhcp-server/lease": {"address", "mac-address", "server", "comment"},
     "/ip/dhcp-client": {"interface", "disabled", "comment"},
@@ -79,6 +92,8 @@ KNOWN_PROPERTIES: dict[str, set[str]] = {
         "http-cookie-lifetime",
         "split-user-domain",
         "use-radius",
+        # Set in the RFC 8910 section so the /api probe is served over https.
+        "ssl-certificate",
     },
     "/ip/hotspot/user/profile": {
         "name",
@@ -305,6 +320,44 @@ def hotspot_interface(text: str) -> str:
     return ""
 
 
+def check_option_114_wiring(text: str) -> list[str]:
+    """Option 114 only reaches a phone if all three of its steps are present.
+
+    Defining the option on /ip/dhcp-server/option is the step everyone tries,
+    and it is not enough on its own: the option has to be collected into a SET
+    and that set attached to the guest DHCP server. A script that does the first
+    and stops there looks correct and sends nothing, which is the exact symptom
+    that prompted this rule.
+    """
+    problems: list[str] = []
+    if ":local enableRfc8910" not in text:
+        return problems  # the section was switched off deliberately
+    if not re.search(r"/ip/dhcp-server/option\s+add\b[^\n]*\bcode=114\b", text):
+        problems.append("no '/ip/dhcp-server/option add ... code=114' - nothing defines the option")
+    if not re.search(r"/ip/dhcp-server/option/sets\s+add\b", text):
+        problems.append("no option SET is created - a defined option is never sent without one")
+    if not re.search(r"/ip/dhcp-server\s+set\b[^\n]*option-set=", text):
+        problems.append(
+            "no DHCP server is given an option-set - RouterOS only sends option 114 "
+            "to clients of a server that carries a set"
+        )
+    # It must be the guest server. Pointing the wired LAN at the option set would
+    # make the desk computer pop the customer portal too.
+    for number, raw in enumerate(text.splitlines(), start=1):
+        code = code_before_comment(raw)
+        if "/ip/dhcp-server set" in code and "option-set=" in code and "$guestDhcpServer" not in code:
+            problems.append(
+                f"line {number}: the option set is attached to the wrong DHCP server - "
+                f"only the guest side may be told about the portal: {code.strip()}"
+            )
+    if not re.search(r"dst-path=\"hotspot/api\.json\"", text):
+        problems.append(
+            "api.json is never fetched - option 114 points at a URL that would "
+            "answer 404, so the client has nothing to open"
+        )
+    return problems
+
+
 def check_hotspot_scope(text: str) -> list[str]:
     """The HotSpot must cover the SSID only, never the wired LAN.
 
@@ -462,6 +515,7 @@ def check(path: Path) -> list[str]:
             problems.append(f"setting '{name}' declared {hits} time(s), expected exactly 1")
 
     problems.extend(check_hotspot_scope(text))
+    problems.extend(check_option_114_wiring(text))
     problems.extend(check_token_separation(lines))
     problems.extend(check_single_argument_commands(lines))
     problems.extend(check_one_statement_per_line(lines))

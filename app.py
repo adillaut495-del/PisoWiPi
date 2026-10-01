@@ -696,6 +696,28 @@ def hotspot_login_page():
     return page, 200, {"Cache-Control": "no-store"}
 
 
+@app.get("/hotspot/api.json")
+def hotspot_api_json():
+    """RFC 8910 captive-portal descriptor, fetched by a phone over option 114.
+
+    Install it on the router the same way as the login page:
+        /tool fetch url="http://<controller>:5000/hotspot/api.json" dst-path=hotspot/api.json
+
+    RouterOS advertises the URL of this file in DHCP option 114, so a phone that
+    supports the option fetches it and opens portal_uri directly. Phones that
+    cannot get past the certificate check fall back to the plain http:// probe,
+    which the login page below already handles.
+    """
+    body = jsonify(
+        {
+            "version": 1,
+            "portal_uri": url_for("portal", _external=True),
+            "api_version": 1,
+        }
+    )
+    return body, 200, {"Cache-Control": "no-store"}
+
+
 @app.get("/portal")
 def portal():
     current = portal_session()

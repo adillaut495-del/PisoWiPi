@@ -334,52 +334,61 @@ Drop one coin of each denomination and write down the pulse counts. Update
 | Coins ignored or the wrong value | Re-run the pulse probe; check `PISO_COIN_PULSES` and the acceptor's `P1..P4` pulse programming |
 | Devices get cut off too soon | Raise `keepalive-timeout` on the user profile. `limit-uptime` counts only connected time, so a phone that stays off does not spend its minutes |
 
-## 8b. RFC 7710 (DHCP option 114): why a phone may not open the portal by itself
+## 8b. RFC 8910 (DHCP option 114): a phone that opens the portal by itself
 
-DHCP option 114 is how a HotSpot tells a client "you are behind a captive portal and its API
-lives here", so the phone opens the portal with no typing at all. It is **optional**: every
-device still falls back to probing a plain HTTP address, and on a piso build that fallback is
-what actually makes the portal appear. Treat this as polish, not as the gate.
+DHCP option 114 tells a client "you are behind a captive portal and its API lives here", so the
+phone opens the portal with no typing at all. It is **optional**: every device still falls back
+to probing a plain HTTP address, and on a piso build that fallback is what actually makes the
+portal appear. Treat it as polish, not as the gate.
 
-RouterOS will only advertise option 114 when **all four** of these hold:
+**The script now does all of this for you** (`hap-ax-lite-piso.rsc`, the RFC 8910 section, on by
+default — set `enableRfc8910` to anything else to skip it):
 
-| Requirement | Where | On a stock piso build |
+| Step | Command the script runs | Why it is needed |
 | --- | --- | --- |
-| a HotSpot DNS name | `/ip/hotspot/profile dns-name` | set by the script (`hotspot.piso.local`), and it must resolve to the **router** |
-| a certificate the client will trust | profile SSL certificate + `www-ssl` | usually the blocker — see below |
-| the option defined with `code=114` | `/ip/dhcp-server/option` | **not** set by default |
-| `api.json` to answer the probe | `/file` → `hotspot/api.json` | absent unless the HotSpot laid down its full HTML set |
+| 1 | `/certificate add … common-name=hotspot.piso.local` + `sign` | a cert whose name matches the HotSpot `dns-name`, so the `/api` URL is served over real https |
+| 2 | `/ip/hotspot/profile set … ssl-certificate=` | tells the HotSpot to serve that cert |
+| 3 | `/ip/dhcp-server/option add … code=114 value="https://hotspot.piso.local/api"` | **defines** the option — on its own this sends nothing |
+| 4 | `/ip/dhcp-server/option/sets add …` then `option=captive-portal` | collects it into a *set* |
+| 5 | `/ip/dhcp-server set [find name=piso-guest-dhcp] option-set=…` | RouterOS only offers the set to clients of a server that carries it |
+| 6 | `/tool fetch … dst-path=hotspot/api.json` | the file the phone actually fetches |
 
-Nothing sends option 114 until you define it *and* attach it to the guest scope:
+Step 5 is the one people miss, and it is why "the option is defined but the phone never gets
+it" is such a common report. Steps 1–2 also used to be left out on purpose, on the grounds that
+`ssl-certificate` might not exist on every firmware; that was over-cautious — the property is
+part of `/ip/hotspot/profile` on RouterOS 7, and the whole section is wrapped in an `on-error`
+block so a firmware that refuses it logs a warning instead of stopping the import.
+
+Check it landed:
 
 ```
-/ip/dhcp-server/option add name=captive-portal code=114 value="https://hotspot.piso.local/api" force=yes
-/ip/dhcp-server/option/sets add name=piso-option-set option=captive-portal
-/ip/dhcp-server set [find name=piso-guest-dhcp] option-set=piso-option-set
+/ip/dhcp-server/option print                 (one row, code 114)
+/ip/dhcp-server/option/sets print            (piso-captive-set, option piso-captive-portal)
+/ip/dhcp-server print                        (piso-guest-dhcp has option-set)
+/ip/hotspot/profile print detail             (ssl-certificate)
+/file print where name~"hotspot"             (login.html AND api.json)
 ```
 
-Type each line in the terminal before putting it in a script: an unknown property is a parse
-error that stops the whole import at that line.
+`router/verify_router.py` checks all five and names the missing one.
 
-### The certificate is the part that usually cannot be fixed
+### The certificate is the part the phone may still refuse
 
-A phone only acts on option 114 when the certificate it finds at that URL is one it trusts. That
-means one issued by a public CA, which in turn means a real public DNS name whose record points
-at the router. `piso-cert` is self-signed, and `hotspot.piso.local` exists only inside your own
-network, so a client will normally reject it. Even a genuinely valid certificate is hard to check
-from behind a captive portal, because the client cannot reach OCSP or NTP until it is already
-online — the chicken-and-egg problem the MikroTik forum threads on this feature keep hitting.
+A phone only acts on option 114 when the certificate it finds at that URL is one it trusts —
+ideally one issued by a public CA, which needs a real public DNS name pointing at the router.
+`piso-hotspot-cert` is self-signed and `hotspot.piso.local` exists only inside your own network,
+so many clients will reject it and fall back to their own HTTP probe. That is not a fault: the
+option has still been sent, and the fallback path works without any certificate at all.
 
-So on a piso build, expect the client's own HTTP probe to be what shows the portal:
+The fallback is the client's own plain-HTTP request, which the HotSpot intercepts on port 80:
 
 * Android asks for `http://connectivitycheck.gstatic.com/generate_204`
 * Apple asks for `http://captive.apple.com/hotspot-detect.html`
 * Windows asks for `http://www.msftconnecttest.com/connecttest.txt`
 
-The HotSpot intercepts all of them on port 80 and answers with the login page, so the OS sees a
-redirect instead of the response it expected and shows "Sign in to network". No certificate is
-involved. It is also exactly why a customer who only ever types `https://` addresses sees
-nothing: a HotSpot intercepts port 80 only.
+The HotSpot answers all of them with the login page, so the OS sees a redirect instead of the
+response it expected and shows "Sign in to network". It is also exactly why a customer who only
+ever types `https://` addresses sees nothing: a HotSpot intercepts port 80 only.
+
 
 ## 9. Everyday operations
 
