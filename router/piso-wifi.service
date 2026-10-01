@@ -1,0 +1,39 @@
+# PisoPilot portal + console as a systemd service.
+#
+# Install on the Pi:
+#     sudo cp router/piso-wifi.service /etc/systemd/system/piso-wifi.service
+#     sudo systemctl daemon-reload
+#     sudo systemctl enable --now piso-wifi
+#     systemctl status piso-wifi
+#
+# THE FOUR PATHS BELOW MUST MATCH THE MACHINE. They are written for a Pi where
+# the checkout is ~/PisoWiPi, the virtualenv is ~/.venv and the login user is
+# adil123. Confirm yours with:
+#     whoami
+#     readlink -f ~/PisoWiPi
+#     readlink -f ~/.venv
+# A service that cannot start is the failure this project keeps repeating: the
+# router then has nothing to download hotspot/login.html from, and every
+# customer gets the RouterOS login form instead of the portal.
+#
+# Do NOT also run `python app.py` by hand while this service is up: two copies
+# both claim GPIO17 and every coin counts twice.
+
+[Unit]
+Description=PisoPilot console and customer portal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=adil123
+WorkingDirectory=/home/adil123/PisoWiPi
+EnvironmentFile=/home/adil123/PisoWiPi/.env
+# PISO_DEBUG must be 0 in that .env: the Werkzeug reloader runs the module twice
+# and only one copy may own the coin pin. PISO_HARDWARE_MODE=real too, or the
+# adapter will not create hotspot users and paying customers stay blocked.
+ExecStart=/home/adil123/.venv/bin/python /home/adil123/PisoWiPi/app.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

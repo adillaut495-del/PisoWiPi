@@ -7,7 +7,9 @@ and the Allan coin acceptor that takes the money.
 | File | Purpose |
 | --- | --- |
 | `hap-ax-lite-piso.rsc` | RouterOS 7 script: LAN, SSID, HotSpot, walled garden, MAC login, REST API user, HTTPS |
+| `check_rsc.py` | Runs on the laptop: proves the `.rsc` is importable *before* it touches the router |
 | `verify_router.py` | Runs on the Pi: proves the REST connection and every HotSpot call `app.py` makes |
+| `piso-wifi.service` | Runs on the Pi: systemd unit that keeps the portal up across reboots and power cuts |
 | `../tools/coin_pulse_probe.py` | Runs on the Pi: measures what the coin slot really sends per denomination |
 
 ## 1. Topology
@@ -208,30 +210,29 @@ Give the Pi a fixed address (`sudo raspi-config` → *Network* → static, or th
 DHCP lease created by the script) and keep it on **ether2/ether3/ether4** — never
 on `ether1`, which belongs to the ISP.
 
-Run it under systemd so it survives reboots and power cuts (`/etc/systemd/system/piso-wifi.service`):
+Run it under systemd so it survives reboots and power cuts. `piso-wifi.service` next to this
+file is the real unit — install it rather than retyping a snippet:
 
 ```
-[Unit]
-Description=PisoPilot console and customer portal
-After=network-online.target
-
-[Service]
-User=pi
-WorkingDirectory=/home/pi/piso-wifi
-EnvironmentFile=/home/pi/piso-wifi/.env
-ExecStart=/home/pi/piso-wifi/.venv/bin/python app.py
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```
+sudo cp router/piso-wifi.service /etc/systemd/system/piso-wifi.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now piso-wifi
 systemctl status piso-wifi
 ```
+
+**Read the four paths in it before you copy it.** They are written for a Pi where the checkout
+is `~/PisoWiPi`, the virtualenv is `~/.venv` and the login user is `adil123`. If yours differ the
+service just fails to start, and that is the failure this project keeps repeating: the router has
+nothing to download `hotspot/login.html` from, and every customer gets the RouterOS login form
+instead of the portal. Confirm with `whoami`, `readlink -f ~/PisoWiPi` and `readlink -f ~/.venv`,
+then edit `User`, `WorkingDirectory`, `EnvironmentFile` and `ExecStart`.
+
+Two settings in the `.env` that service reads matter: `PISO_DEBUG=0` (the reloader would run the
+module twice and both copies would claim GPIO17) and `PISO_HARDWARE_MODE=real` (in `simulation`
+the adapter never creates hotspot users, so paying customers stay blocked).
+
+Once the service is up, stop launching `app.py` by hand — two copies both own the coin pin and
+every coin counts twice.
 
 `PISO_DEBUG=0` in `.env` matters here: the reloader would otherwise start the
 process twice and both copies would claim GPIO17, double-counting every coin.
