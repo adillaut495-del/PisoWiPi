@@ -202,10 +202,22 @@ def main(argv=None) -> int:
         api is not None,
         "installed" if api is not None else "absent, so that probe would get a 404",
     )
-    report.note("a phone only acts on option 114 if the certificate it finds at that")
-    report.note("URL is one it trusts. A self-signed certificate on a local-only name")
-    report.note("normally fails that check, so the http:// redirect stays the reliable")
-    report.note("path. See the RFC 7710 section in README.md.")
+    # Name the most likely cause rather than restating the symptom. These three
+    # checks fail together exactly one way in practice: the router is still on
+    # the pre-RFC-8910 configuration, because the script section that adds the
+    # option was never imported (or the import stopped before it).
+    report.note("all three are missing together, so the router has never had this")
+    report.note("section applied. Fix it on the router, in this order:")
+    report.note("  1. start app.py on the Pi - api.json is fetched from it")
+    report.note("  2. test the one version-sensitive line, it is a PARSE error if the")
+    report.note("     firmware lacks the property, and a parse error cannot be caught:")
+    report.note("       /ip/hotspot/profile set piso-profile ssl-certificate=piso-cert")
+    report.note("  3. copy router/hap-ax-lite-piso.rsc to the router and:")
+    report.note("       /import file-name=hap-ax-lite-piso.rsc")
+    report.note("  4. /log print where message~\"PisoPilot\"   (four new info lines)")
+    report.note("If step 2 errors, set enableRfc8910 to \"no\" at the top of the script")
+    report.note("and import again; the plain http:// redirect does not need option 114.")
+    report.note("See the RFC 8910 section in README.md.")
 
     addresses, _, _ = timed(adapter._request, "GET", "ip/address")
     addresses = addresses if isinstance(addresses, list) else ([addresses] if addresses else [])
