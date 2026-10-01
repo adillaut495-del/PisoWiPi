@@ -392,6 +392,39 @@ Check it landed:
 
 `router/verify_router.py` checks all five and names the missing one.
 
+### If the phone says "no internet" instead of raising the notification
+
+This is the most common HotSpot symptom, and it is **not** a sign that the block failed — it is
+proof the block is working. The phone asked whether it has internet, got nothing usable, and
+concluded what anyone would.
+
+The cause is `login-by`. A HotSpot only intercepts the protocols listed in it, and current
+Android, iOS and Windows probe their captive-portal URL over **HTTPS**. With
+
+```
+login-by=mac,http-chap,cookie,mac-cookie
+```
+
+the router never answers that probe, so the phone sees a network that resolves nothing and
+reports "no internet" — forever, and no matter how many times you toggle Wi-Fi.
+
+The fix is one value:
+
+```
+/ip/hotspot/profile set piso-profile login-by=mac,https,http-chap,cookie,mac-cookie
+/ip/hotspot/profile set piso-profile ssl-certificate=piso-hotspot-cert
+```
+
+`https` is useless on its own: without a certificate to serve, the router has nothing to answer
+with. The script creates `piso-hotspot-cert` (self-signed, `common-name=hotspot.piso.local` so it
+matches `dns-name`) immediately **before** the profile that points at it, because the assignment
+fails on a fresh router otherwise. `check_https_login()` in `check_rsc.py` enforces all three
+conditions — `https` present, certificate created, certificate assigned — and negative-tests each.
+
+Expect a browser warning the first time a customer opens the portal: the certificate is
+self-signed, and no warning can be avoided for a name that only exists on your LAN. The phone's
+own notification is unaffected.
+
 ### The certificate is the part the phone may still refuse
 
 A phone only acts on option 114 when the certificate it finds at that URL is one it trusts —

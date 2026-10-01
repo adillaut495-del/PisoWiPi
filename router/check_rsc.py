@@ -328,6 +328,72 @@ def hotspot_interface(text: str) -> str:
     return ""
 
 
+def check_https_login(text: str) -> list[str]:
+    """login-by must include https, or no phone raises the sign-in notification.
+
+    A HotSpot only intercepts the protocols listed in login-by. Modern Android,
+    iOS and Windows probe their captive-portal URL over HTTPS, so a profile
+    without https never answers that probe: the phone sees a network that
+    resolves nothing and reports "no internet", while the block itself is
+    working perfectly. This was the last reason the portal never appeared.
+    """
+    problems: list[str] = []
+    bare = "\n".join(code_only(line) for line in text.splitlines())
+
+    # Resolve :local variables so a value held in a variable is still judged.
+    # login-by=$pisoLoginBy is correct only if the variable contains https, and
+    # the raw text of the assignment says nothing about that. The values are read
+    # from `text`, NOT from `bare`: code_only() strips quoted strings, which is
+    # exactly where a :local keeps its value, so bare would show ":local x " with
+    # nothing after it.
+    variables = dict(re.findall(r":local\s+([A-Za-z0-9_]+)\s+\"?([A-Za-z0-9,._$/-]+)\"?", text))
+
+    def expand(value: str) -> str:
+        for _ in range(5):  # variables may reference other variables
+            replaced = re.sub(
+                r"\$([A-Za-z0-9_]+)",
+                lambda m: variables.get(m.group(1), m.group(0)),
+                value,
+            )
+            if replaced == value:
+                break
+            value = replaced
+        return value
+
+    # Find every login-by assignment and check for https among its values.
+    assignments = re.findall(r"\blogin-by=([A-Za-z0-9,$-]+)", bare)
+    if not assignments:
+        return problems  # login-by is not set by this script at all
+    for value in assignments:
+        values = [part.strip().lower() for part in expand(value).split(",") if part.strip()]
+        if "https" not in values:
+            problems.append(
+                f"login-by={value} does not include https - a phone probes the captive "
+                "portal over HTTPS, so without it the HotSpot never answers and the phone "
+                "reports 'no internet' instead of raising the sign-in notification"
+            )
+    if not re.search(r"/certificate add\b[^\n]*\$hotspotCertName", bare):
+        problems.append("no HotSpot certificate is created, so ssl-certificate cannot point at one")
+    if not re.search(r"/ip/hotspot/profile\s+set\b[^\n]*ssl-certificate=", bare):
+        problems.append(
+            "ssl-certificate is never assigned - login-by=https cannot intercept anything "
+            "until the profile has a certificate to serve"
+        )
+    # The certificate must be created BEFORE the profile that references it, or
+    # the assignment fails on a fresh router. Compare the FIRST occurrence of
+    # each: later copies of ssl-certificate= live inside :log warning strings,
+    # and matching those would compare a real assignment against a message.
+    created = bare.find("/certificate add")
+    assigned = bare.find("/ip/hotspot/profile set")
+    assigned_ssl = bare.find("ssl-certificate=")
+    if created != -1 and assigned_ssl != -1 and assigned != -1 and assigned < created:
+        problems.append(
+            "the profile points at ssl-certificate before the certificate is created - "
+            "move the /certificate add above the profile block or it fails on a fresh router"
+        )
+    return problems
+
+
 def check_option_114_wiring(text: str) -> list[str]:
     """Option 114 only reaches a phone if all three of its steps are present.
 
@@ -557,6 +623,7 @@ def check(path: Path) -> list[str]:
             problems.append(f"setting '{name}' declared {hits} time(s), expected exactly 1")
 
     problems.extend(check_hotspot_scope(text))
+    problems.extend(check_https_login(text))
     problems.extend(check_option_114_wiring(text))
     problems.extend(check_token_separation(lines))
     problems.extend(check_single_argument_commands(lines))

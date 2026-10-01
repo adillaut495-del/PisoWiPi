@@ -257,6 +257,36 @@ def main(argv=None) -> int:
     report.note("URL, so a self-signed one usually falls back to the http:// redirect.")
     report.note("See the RFC 8910 section in README.md.")
 
+    # login-by must include https. This is the single most common reason a phone
+    # reports "SSID has no internet" instead of raising the sign-in notification:
+    # a HotSpot only intercepts the protocols listed in login-by, and modern
+    # Android/iOS/Windows probe the captive portal over HTTPS.
+    live_login_by: list[str] = []
+    live_ssl: list[str] = []
+    for row in live_profiles:
+        methods = [part.strip().lower() for part in str(row.get("login-by", "")).split(",") if part.strip()]
+        live_login_by.extend(methods)
+        cert = str(row.get("ssl-certificate", "") or "")
+        if cert and cert not in ("none", "null"):
+            live_ssl.append(str(row.get("name")) + " -> " + cert)
+
+    report.check(
+        "login-by includes https (a phone probes the portal over HTTPS)",
+        "https" in live_login_by,
+        ",".join(sorted(set(live_login_by))) if live_login_by else "login-by is empty",
+    )
+    report.check(
+        "the HotSpot profile has a certificate to serve https with",
+        bool(live_ssl),
+        "; ".join(live_ssl)
+        if live_ssl
+        else "ssl-certificate is unset - login-by=https cannot intercept anything without one",
+    )
+    if "https" in live_login_by and not live_ssl:
+        report.note("https is in login-by but there is no certificate, so the probe still")
+        report.note("fails. By hand: /certificate add name=piso-hotspot-cert common-name=hotspot.piso.local")
+        report.note("then /ip/hotspot/profile set <profile> ssl-certificate=piso-hotspot-cert")
+
     addresses, _, _ = timed(adapter._request, "GET", "ip/address")
     addresses = addresses if isinstance(addresses, list) else ([addresses] if addresses else [])
     router_ips = {str(item.get("address", "")).split("/")[0] for item in addresses}

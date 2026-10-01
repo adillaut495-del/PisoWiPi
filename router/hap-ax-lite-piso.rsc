@@ -191,10 +191,42 @@
 :log warning "PisoPilot: could not read /system/device-mode - if /ip/hotspot is greyed out in WinBox, run: /system/device-mode set hotspot=yes fetch=yes"
 }
  
-:if ([:len [/ip/hotspot/profile find where name=$hotspotProfile]] = 0) do={
-/ip/hotspot/profile add name=$hotspotProfile hotspot-address=$guestGateway dns-name=$hotspotDnsName html-directory=hotspot login-by=mac,http-chap,cookie,mac-cookie http-cookie-lifetime=1d use-radius=no
+# The HTTPS certificate has to exist BEFORE the profile can point at it, so it
+# is created here rather than in the RFC 8910 section further down. /certificate
+# add already produces a self-signed certificate on RouterOS 7 - do NOT add
+# "/certificate sign", there is no CA on this router and it answers
+# "CA not found".
+:do {
+:if ([:len [/certificate find where name=$hotspotCertName]] = 0) do={
+/certificate add name=$hotspotCertName common-name=$hotspotDnsName days-valid=3650 key-usage=key-cert-sign,crl-sign,tls-server key-size=2048
+:log info ("PisoPilot: created the HotSpot certificate " . $hotspotCertName)
 }
-/ip/hotspot/profile set [find where name=$hotspotProfile] hotspot-address=$guestGateway dns-name=$hotspotDnsName login-by=mac,http-chap,cookie,mac-cookie http-cookie-lifetime=1d use-radius=no
+} on-error={
+:log warning ("PisoPilot: could not create " . $hotspotCertName . " - HTTPS login and option 114 will not work until a certificate is assigned")
+}
+
+# login-by MUST include https.
+#
+# This is the single reason a phone reports "A2N Piso WiFi has no internet"
+# instead of raising the sign-in notification. Modern Android, iOS and Windows
+# probe their captive-portal URL over HTTPS, and a HotSpot only intercepts what
+# login-by covers. Without https in this list the router never answers that
+# probe, so the phone sees a network that resolves nothing and concludes it has
+# no internet - while the blocking itself is working perfectly.
+#
+# The certificate is self-signed, so the customer gets a browser warning the
+# first time. That is expected and unavoidable on a local-only name.
+:local pisoLoginBy "mac,https,http-chap,cookie,mac-cookie"
+:if ([:len [/ip/hotspot/profile find where name=$hotspotProfile]] = 0) do={
+/ip/hotspot/profile add name=$hotspotProfile hotspot-address=$guestGateway dns-name=$hotspotDnsName html-directory=hotspot login-by=$pisoLoginBy http-cookie-lifetime=1d use-radius=no
+}
+/ip/hotspot/profile set [find where name=$hotspotProfile] hotspot-address=$guestGateway dns-name=$hotspotDnsName login-by=$pisoLoginBy http-cookie-lifetime=1d use-radius=no
+:do {
+/ip/hotspot/profile set [find where name=$hotspotProfile] ssl-certificate=$hotspotCertName
+:log info ("PisoPilot: HotSpot serves https with " . $hotspotCertName)
+} on-error={
+:log warning ("PisoPilot: could not assign ssl-certificate - without it login-by=https cannot intercept the probe a phone uses to raise the sign-in notification. Test: /ip/hotspot/profile print detail")
+}
  
 :if ([:len [/ip/hotspot/user/profile find where name=$packageProfile]] = 0) do={
 /ip/hotspot/user/profile add name=$packageProfile rate-limit="1M/2M" shared-users=1 keepalive-timeout=3m idle-timeout=none session-timeout=0s add-mac-cookie=yes mac-cookie-timeout=1d open-status-page=http-login
@@ -373,15 +405,9 @@
 :do {
 :local enableRfc8910 "yes"
 :if ($enableRfc8910 = "yes") do={
-# 1. the certificate. /certificate add is enough; it is already self-signed.
-:if ([:len [/certificate find where name=$hotspotCertName]] = 0) do={
-:do {
-/certificate add name=$hotspotCertName common-name=$hotspotDnsName days-valid=3650 key-usage=key-cert-sign,crl-sign,tls-server
-:log info ("PisoPilot: created " . $hotspotCertName)
-} on-error={
-:log warning ("PisoPilot: could not create " . $hotspotCertName)
-}
-}
+# 1. the certificate. Created much earlier, above the profile, because the
+# profile has to point at it. Nothing to do here.
+/certificate print where name=$hotspotCertName
 # 2. the option. The inner single quotes are what make it a string.
 :local captiveUrl ("https://" . $hotspotDnsName . "/api")
 :local captiveValue ("'" . $captiveUrl . "'")
