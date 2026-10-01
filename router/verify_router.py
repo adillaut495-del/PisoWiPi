@@ -202,21 +202,33 @@ def main(argv=None) -> int:
         api is not None,
         "installed" if api is not None else "absent, so that probe would get a 404",
     )
-    # Name the most likely cause rather than restating the symptom. These three
-    # checks fail together exactly one way in practice: the router is still on
-    # the pre-RFC-8910 configuration, because the script section that adds the
-    # option was never imported (or the import stopped before it).
-    report.note("all three are missing together, so the router has never had this")
-    report.note("section applied. Fix it on the router, in this order:")
-    report.note("  1. start app.py on the Pi - api.json is fetched from it")
-    report.note("  2. test the one version-sensitive line, it is a PARSE error if the")
-    report.note("     firmware lacks the property, and a parse error cannot be caught:")
-    report.note("       /ip/hotspot/profile set piso-profile ssl-certificate=piso-cert")
-    report.note("  3. copy router/hap-ax-lite-piso.rsc to the router and:")
-    report.note("       /import file-name=hap-ax-lite-piso.rsc")
-    report.note("  4. /log print where message~\"PisoPilot\"   (four new info lines)")
-    report.note("If step 2 errors, set enableRfc8910 to \"no\" at the top of the script")
-    report.note("and import again; the plain http:// redirect does not need option 114.")
+    # Distinguish "never imported" from "imported but the section failed". Both look
+    # the same from the API, and they have completely different fixes.
+    if api is not None and option_114 is None:
+        report.note("api.json IS installed, so the script did run - but the option 114")
+        report.note("section did not complete. A parse error cannot be caught, so this")
+        report.note("was a RUNTIME error, logged as a warning. Read it:")
+        report.note("  /log print where message~\"option 114 section failed\"")
+        report.note("then apply the three steps by hand, one at a time, so the terminal")
+        report.note("names the line that is refused:")
+        report.note("  /certificate add name=piso-hotspot-cert common-name=hotspot.piso.local days-valid=3650 key-usage=key-cert-sign,crl-sign,tls-server")
+        report.note("  /certificate sign piso-hotspot-cert")
+        report.note("  /ip/dhcp-server/option add name=piso-captive-portal code=114 value=\"https://hotspot.piso.local/api\"")
+        report.note("  /ip/dhcp-server/option/sets add name=piso-captive-set")
+        report.note("  /ip/dhcp-server/option/sets set piso-captive-set option=piso-captive-portal")
+        report.note("  /ip/dhcp-server set [find name=piso-guest-dhcp] option-set=piso-captive-set")
+    else:
+        report.note("all three are missing together, so the router has never had this")
+        report.note("section applied. Fix it on the router, in this order:")
+        report.note("  1. start app.py on the Pi - api.json is fetched from it")
+        report.note("  2. copy router/hap-ax-lite-piso.rsc to the router and:")
+        report.note("       /import file-name=hap-ax-lite-piso.rsc")
+        report.note("  3. /log print where message~\"PisoPilot\"   (four new info lines)")
+        report.note("If the import stops with 'expected end of command', the column")
+        report.note("points at a property this firmware does not accept - test that")
+        report.note("single line in the terminal before re-importing.")
+    report.note("A phone only acts on option 114 if it trusts the certificate at that")
+    report.note("URL, so a self-signed one usually falls back to the http:// redirect.")
     report.note("See the RFC 8910 section in README.md.")
 
     addresses, _, _ = timed(adapter._request, "GET", "ip/address")
