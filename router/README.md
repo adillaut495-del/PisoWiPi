@@ -354,10 +354,28 @@ default — set `enableRfc8910` to anything else to skip it):
 | 6 | `/tool fetch … dst-path=hotspot/api.json` | the file the phone actually fetches |
 
 Step 5 is the one people miss, and it is why "the option is defined but the phone never gets
-it" is such a common report. Steps 1–2 also used to be left out on purpose, on the grounds that
-`ssl-certificate` might not exist on every firmware; that was over-cautious — the property is
-part of `/ip/hotspot/profile` on RouterOS 7, and the whole section is wrapped in an `on-error`
-block so a firmware that refuses it logs a warning instead of stopping the import.
+it" is such a common report.
+
+Steps 1–2 (`ssl-certificate` on the HotSpot profile) used to be left out of the script on the
+grounds that the property might not exist on every firmware. That turned out to be over-cautious:
+it is part of `/ip/hotspot/profile` on RouterOS 7, and leaving it out is what kept a phone from
+getting a working portal URL.
+
+⚠️ **The `on-error` wrapper does not protect this line.** `ssl-certificate=` is inside a `:do { }
+on-error={ }` block, which catches *runtime* failures only. An unknown property name is rejected
+by the **parser** while the line is read, before any block is entered, and it stops the whole
+import at that line with "expected end of command" — no `on-error` anywhere can catch that. So if
+your firmware rejects the property, the symptom is a half-applied import, not a warning.
+
+Test that single line in the terminal before importing anything:
+
+```
+/ip/hotspot/profile set piso-profile ssl-certificate=piso-cert
+```
+
+If it is accepted, `/import` will accept it. If it errors, set `enableRfc8910` to `"no"` at the
+top of the script to skip the whole section, or delete just that one line — the plain `http://`
+redirect keeps working without it either way.
 
 Check it landed:
 
