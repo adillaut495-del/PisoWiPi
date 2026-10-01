@@ -162,18 +162,34 @@ def main(argv=None) -> int:
         report.note('  /file print where name~"hotspot"')
         report.note("and read the import log for the warning:")
         report.note('  /log print where message~"PisoPilot: hotspot/login.html"')
+    # Only the profiles the HotSpot servers actually use: the stock "default"
+    # profile is not in service, so its empty dns-name is not a fault.
+    live_profiles = [
+        row for row in profiles if str(row.get("name")) in {str(server.get("profile")) for server in servers}
+    ] or profiles
+
+    # api.json is what a phone fetches to pop the portal open by itself. RouterOS
+    # only publishes it when the profile can also serve the login page over HTTPS
+    # (RFC 7710 wants ssl-certificate), so on firmware without that property
+    # api.json is unreachable by design - failing the check for it would be a
+    # permanent red mark against a setting nobody can change.
     api = next((item for item in files if str(item.get("name", "")).endswith("hotspot/api.json")), None)
-    report.check("hotspot/api.json is installed (RFC 7710 self-opening portal)", api is not None)
+    if any("ssl-certificate" in row for row in live_profiles):
+        report.check("hotspot/api.json is installed (RFC 7710 self-opening portal)", api is not None)
+    elif api is None:
+        report.note("hotspot/api.json is absent, which is expected here: with no ssl-certificate on")
+        report.note("the profile RouterOS cannot send the RFC 7710 DHCP option, so there is nothing")
+        report.note("for api.json to advertise. Customers open a plain http:// address instead.")
+    else:
+        report.note("hotspot/api.json exists but the profile has no ssl-certificate, so a phone")
+        report.note("still will not auto-open the portal. A plain http:// address works.")
 
     addresses, _, _ = timed(adapter._request, "GET", "ip/address")
     addresses = addresses if isinstance(addresses, list) else ([addresses] if addresses else [])
     router_ips = {str(item.get("address", "")).split("/")[0] for item in addresses}
     static, _, _ = timed(adapter._request, "GET", "ip/dns/static")
     static = static if isinstance(static, list) else ([static] if static else [])
-    # Only the profiles the HotSpot servers actually use: the stock "default"
-    # profile is not in service, so its empty dns-name is not a fault.
-    live = {str(server.get("profile")) for server in servers if server.get("profile")}
-    for entry in [row for row in profiles if str(row.get("name")) in live] or profiles:
+    for entry in live_profiles:
         profile_name = str(entry.get("name"))
         dns_name = str(entry.get("dns-name", ""))
         if not dns_name:
