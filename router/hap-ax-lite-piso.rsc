@@ -238,6 +238,16 @@
 :if ([:len [/ip/hotspot find where name=$hotspotServer]] = 0) do={
 /ip/hotspot add name=$hotspotServer interface=$guestBridge profile=$hotspotProfile address-pool=none addresses-per-mac=2 login-timeout=1m
 }
+# Do NOT add log=yes here. It looks like it should exist and does not: the
+# /ip/hotspot property table in the MikroTik manual lists name, interface,
+# address-pool, profile, idle-timeout, keepalive-timeout, login-timeout,
+# addresses-per-mac and proxy-status - and no "log". An unknown property is a
+# PARSE error, so it would stop the import dead at that column. check_rsc.py
+# refused it for exactly this reason.
+#
+# A blank "/log print where topics~hotspot" is therefore the NORMAL result and
+# proves nothing either way. Diagnose a client with /ip/hotspot/host print and
+# by browsing from the phone, not from the log.
 /ip/hotspot set [find where name=$hotspotServer] interface=$guestBridge profile=$hotspotProfile addresses-per-mac=2
  
 # Only the Pi is walled-gardened. Deliberately NOT the hotspot's own dns-name:

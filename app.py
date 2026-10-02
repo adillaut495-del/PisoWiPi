@@ -4,7 +4,9 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import sqlite3
+import subprocess
 import threading
 import time
 
@@ -1664,12 +1666,59 @@ def update_admin():
     return redirect(url_for("login"))
 
 
+def run_power_action(command, description):
+    """Run a privileged command, and report honestly whether it worked.
+
+    The old handler logged "Requested restart-service" and did nothing at all, so
+    an operator pressing Restart was told nothing had happened and had no way to
+    tell the difference from a failure. Now the result - including the real
+    error - is written to the log the dashboard shows.
+    """
+    if shutil.which(command[0]) is None:
+        message = f"{description}: '{command[0]}' is not installed, so nothing was done"
+        write_log("system", message, "warning")
+        return message
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    except Exception as error:
+        message = f"{description} failed: {error}"
+        write_log("system", message, "warning")
+        return message
+    if completed.returncode == 0:
+        message = f"{description}: sent ({' '.join(command)})"
+        write_log("system", message, "info")
+    else:
+        detail = (completed.stderr or completed.stdout or "").strip()[:300]
+        message = f"{description} failed (exit {completed.returncode}): {detail or 'no output'}"
+        write_log("system", message, "warning")
+    return message
+
+
+# Real commands, resolved at run time. A development machine has no systemctl,
+# so the handler says so plainly instead of pretending.
+POWER_ACTIONS = {
+    "restart-service": (["sudo", "systemctl", "restart", "piso-wifi"], "Service restart requested"),
+    "restart-network": (["sudo", "systemctl", "restart", "NetworkManager"], "Network restart requested"),
+    "reboot": (["sudo", "systemctl", "reboot"], "Reboot requested"),
+    "shutdown": (["sudo", "systemctl", "poweroff"], "Shutdown requested"),
+}
+
+
 @app.post("/system/<action>")
 @admin_required
 def system_action(action):
-    allowed = {"restart-service", "restart-network", "reboot", "shutdown"}
-    if action in allowed:
-        write_log("system", f"Requested {action}; hardware adapter is not connected", "warning")
+    if action not in POWER_ACTIONS:
+        write_log("system", f"Ignored unknown system action '{action}'", "warning")
+        return redirect(url_for("dashboard") + "#settings")
+    command, description = POWER_ACTIONS[action]
+    # A power action must not run inside the request that triggers it, or the
+    # response never reaches the browser and the operator sees a hung page.
+    if action in ("reboot", "shutdown"):
+        message = f"{description}: the system will go down now"
+        write_log("system", message, "warning")
+        threading.Timer(2, lambda: run_power_action(command, description)).start()
+    else:
+        run_power_action(command, description)
     return redirect(url_for("dashboard") + "#settings")
 
 
