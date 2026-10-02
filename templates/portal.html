@@ -155,15 +155,20 @@
             label.textContent = data.coin_count > 0 ? 'ACCEPTING' : 'WAITING';
             return;
           }
-          stopped = true;
           if (data.status === 'accepted') {
             fill(data);
             title.textContent = 'Coins accepted';
             label.textContent = 'ACTIVATING';
+            if (!data.session_active) {
+              setTimeout(poll, 500);
+              return;
+            }
+            stopped = true;
             beep('success');
-            setTimeout(() => location.reload(), 900);
+            setTimeout(() => location.reload(), 250);
             return;
           }
+          stopped = true;
           if (data.status === 'expired') {
             title.textContent = 'Coin request timed out';
             label.textContent = 'CLOSED';

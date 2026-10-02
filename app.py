@@ -530,16 +530,18 @@ def portal_device_id():
 
 def portal_session():
     session_id = session.get("portal_session_id")
+    current = None
     with get_db() as connection:
         if session_id:
             current = connection.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
-        else:
+        if not current or current["status"] not in {"active", "paused"}:
+            session.pop("portal_session_id", None)
             current = connection.execute(
                 "SELECT * FROM sessions WHERE mac_address = ? AND status IN ('active', 'paused') ORDER BY id DESC LIMIT 1",
                 (portal_device_id(),),
             ).fetchone()
-            if current:
-                session["portal_session_id"] = current["id"]
+        if current and current["status"] in {"active", "paused"}:
+            session["portal_session_id"] = current["id"]
     if not current or current["status"] not in {"active", "paused"}:
         return None
     if current["expires_at"] and datetime.fromisoformat(current["expires_at"]) <= datetime.now():
@@ -1014,7 +1016,14 @@ def router_authorize(device, minutes, download_mbps=None, upload_mbps=None, prof
     except Exception as error:  # a router hiccup must never block a settlement
         write_log("router", f"Could not authorize {device} on the hotspot: {error}", "warning")
         return None
-    write_log("router", f"Hotspot access for {device}: {result.get('status')} at {minutes} minute(s) on {result.get('profile', 'the default profile')}")
+    reauthentication = result.get("reauthentication", "not-needed")
+    level = "warning" if reauthentication == "pending" else "info"
+    write_log(
+        "router",
+        f"Hotspot access for {device}: {result.get('status')} at {minutes} minute(s) on "
+        f"{result.get('profile', 'the default profile')}; reauthentication: {reauthentication}",
+        level,
+    )
     return result
 
 
@@ -1310,6 +1319,8 @@ def portal_coin_request_api():
         return jsonify({"status": "none"})
     payload = coin_request_payload(latest)
     payload["status"] = latest["status"] if latest["status"] in {"accepted", "expired", "cancelled"} else "none"
+    if payload["status"] == "accepted":
+        payload["session_active"] = portal_session() is not None
     return jsonify(payload)
 
 

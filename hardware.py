@@ -242,10 +242,18 @@ class MikroTikRouterAdapter:
         existing = self.hotspot_user(mac_address)
         if not existing:
             self._request("PUT", "ip/hotspot/user", json=payload)
-            return {"status": "created", "name": mac_address, "minutes": minutes, "profile": chosen}
-        self._request("PATCH", f"ip/hotspot/user/{existing['.id']}", json={k: v for k, v in payload.items() if k != "name"})
-        self.disconnect(mac_address)
-        return {"status": "updated", "name": mac_address, "minutes": minutes, "profile": chosen}
+            status = "created"
+        else:
+            self._request("PATCH", f"ip/hotspot/user/{existing['.id']}", json={k: v for k, v in payload.items() if k != "name"})
+            status = "updated"
+        reauthentication = self.reconnect_hotspot_client(mac_address)
+        return {
+            "status": status,
+            "name": mac_address,
+            "minutes": minutes,
+            "profile": chosen,
+            "reauthentication": reauthentication["status"],
+        }
 
     def revoke(self, mac_address):
         """End a device's access: drop the live session, then delete its hotspot user."""
@@ -271,6 +279,23 @@ class MikroTikRouterAdapter:
                 self._request("DELETE", f"ip/hotspot/active/{client['.id']}")
                 return {"status": "disconnected", "name": client.get("user", mac_address)}
         return {"status": "not-connected"}
+
+    def reconnect_hotspot_client(self, mac_address):
+        """Force the next packet from this MAC through HotSpot MAC authentication."""
+        dropped = self.disconnect(mac_address)
+        if dropped.get("status") == "disconnected":
+            return dropped
+        wanted = (mac_address or "").strip().lower()
+        for host in self.hotspot_hosts():
+            if str(host.get("mac-address", "")).strip().lower() != wanted:
+                continue
+            try:
+                self._request("DELETE", f"ip/hotspot/host/{host['.id']}")
+                return {"status": "host-reset", "name": mac_address}
+            except requests.RequestException as error:
+                LOGGER.warning("Could not reset HotSpot host %s: %s", mac_address, error)
+                return {"status": "pending", "name": mac_address, "detail": str(error)}
+        return {"status": "waiting-for-client-traffic", "name": mac_address}
 
 
 class CoinPulseListener:
