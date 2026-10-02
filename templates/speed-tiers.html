@@ -1,0 +1,26 @@
+<section class="panel speed-tiers-panel" id="speed-tiers" data-tier-api="{{ url_for('speed_tiers_api') }}">
+  <div class="panel-heading">
+    <div>
+      <p class="eyebrow">NETWORK &amp; VENDING / ACCESS CONTROL</p>
+      <h2>Speed tiers</h2>
+      <p class="muted">Manage the speeds offered on new vouchers and sessions.</p>
+    </div>
+  </div>
+  <p class="speed-tier-note">The RouterOS user profile must already exist. Set its <code>rate-limit</code> in upload/download order to match the values below.</p>
+  <div class="speed-tier-editor" id="speed-tier-editor">
+    <label>Download (Mbps)<input id="tier-download" type="number" min="0.1" max="1000" step="0.1" required></label>
+    <label>Upload (Mbps)<input id="tier-upload" type="number" min="0.1" max="1000" step="0.1" required></label>
+    <label>RouterOS profile<input id="tier-profile" type="text" maxlength="64" required placeholder="piso-premium"></label>
+    <div class="speed-tier-actions">
+      <button class="button" id="tier-save" type="button">Add tier</button>
+      <button class="button secondary" id="tier-cancel" type="button" hidden>Cancel edit</button>
+    </div>
+  </div>
+  <p class="speed-tier-message" id="tier-message" role="status" aria-live="polite"></p>
+  <div class="table-wrap">
+    <table class="speed-tier-table">
+      <thead><tr><th>Download / upload</th><th>RouterOS profile</th><th>Actions</th></tr></thead>
+      <tbody id="speed-tier-rows"><tr><td colspan="3" class="empty-state">Loading speed tiers...</td></tr></tbody>
+    </table>
+  </div>
+</section>

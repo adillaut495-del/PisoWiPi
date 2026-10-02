@@ -1,0 +1,89 @@
+.speed-tiers-panel {
+  min-width: 0;
+}
+
+.speed-tier-note {
+  margin: 0 0 18px;
+  padding: 11px 13px;
+  border-left: 3px solid var(--orange);
+  background: #fff8ef;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.speed-tier-note code {
+  color: var(--ink);
+  font-family: "DM Mono", monospace;
+}
+
+.speed-tier-editor {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.speed-tier-editor label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.speed-tier-editor input {
+  min-width: 0;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  background: #fbfdfa;
+  font: 0.85rem "DM Mono", monospace;
+}
+
+.speed-tier-editor input:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+.speed-tier-actions {
+  display: flex;
+  gap: 7px;
+}
+
+.speed-tier-message {
+  min-height: 1.25em;
+  margin: 10px 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.speed-tier-message[data-error="true"] {
+  color: var(--red);
+}
+
+.speed-tier-table {
+  min-width: 480px;
+}
+
+.speed-tier-table .tier-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.speed-tier-table .tier-actions button {
+  cursor: pointer;
+}
+
+@media (max-width: 700px) {
+  .speed-tier-editor {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .speed-tier-actions {
+    grid-column: 1 / -1;
+  }
+}

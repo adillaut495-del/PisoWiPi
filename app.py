@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 import hashlib
+import math
 import os
 from pathlib import Path
 import re
@@ -69,6 +70,7 @@ def initialize_database():
                 minutes INTEGER NOT NULL,
                 download_limit_mbps REAL NOT NULL DEFAULT 2,
                 upload_limit_mbps REAL NOT NULL DEFAULT 1,
+                router_profile TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'unused',
                 mac_address TEXT,
                 created_at TEXT NOT NULL,
@@ -84,12 +86,22 @@ def initialize_database():
                 data_up_mb REAL NOT NULL DEFAULT 0,
                 download_limit_mbps REAL NOT NULL DEFAULT 2,
                 upload_limit_mbps REAL NOT NULL DEFAULT 1,
+                router_profile TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'active',
                 started_at TEXT NOT NULL,
                 last_seen TEXT NOT NULL,
                 expires_at TEXT,
                 source TEXT,
                 granted_minutes INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS speed_tiers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                download_limit_mbps REAL NOT NULL,
+                upload_limit_mbps REAL NOT NULL,
+                router_profile TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                UNIQUE(download_limit_mbps, upload_limit_mbps),
+                UNIQUE(router_profile)
             );
             CREATE TABLE IF NOT EXISTS admins (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,6 +164,11 @@ def initialize_database():
             connection.execute("ALTER TABLE vouchers ADD COLUMN upload_limit_mbps REAL NOT NULL DEFAULT 1")
         except sqlite3.OperationalError:
             pass
+        for table in ("vouchers", "sessions"):
+            try:
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN router_profile TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
         connection.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('minutes_per_peso', '10')"
         )
@@ -173,6 +190,21 @@ def initialize_database():
         connection.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('coin_auto_settle_seconds', '5')"
         )
+        tier_count = connection.execute("SELECT COUNT(*) AS total FROM speed_tiers").fetchone()["total"]
+        if tier_count == 0:
+            profiles = hardware.router_adapter.config.rate_profile_map()
+            profiles.setdefault("2/1", hardware.router_adapter.config.router_default_profile)
+            for key, profile in profiles.items():
+                try:
+                    download, upload = (float(value) for value in key.split("/", 1))
+                except (TypeError, ValueError):
+                    continue
+                if download <= 0 or upload <= 0 or not str(profile).strip():
+                    continue
+                connection.execute(
+                    "INSERT OR IGNORE INTO speed_tiers (download_limit_mbps, upload_limit_mbps, router_profile) VALUES (?, ?, ?)",
+                    (download, upload, str(profile).strip()),
+                )
         connection.execute(
             "INSERT OR IGNORE INTO admins (username, password_hash) VALUES (?, ?)",
             ("admin", generate_password_hash("admin")),
@@ -203,27 +235,46 @@ COIN_DENOMINATIONS = (1, 5, 10, 20)
 
 
 def voucher_speed_tiers():
-    config = hardware.router_adapter.config
-    profiles = config.rate_profile_map()
-    profiles.setdefault("2/1", config.router_default_profile)
-    tiers = []
-    for key, profile in profiles.items():
-        try:
-            download, upload = (float(value) for value in key.split("/", 1))
-        except (TypeError, ValueError):
-            continue
-        if download <= 0 or upload <= 0:
-            continue
-        tiers.append(
-            {
-                "key": key,
-                "download": download,
-                "upload": upload,
-                "profile": profile,
-                "label": f"{download:g}/{upload:g} Mbps down/up - {profile}",
-            }
-        )
-    return sorted(tiers, key=lambda tier: (tier["download"], tier["upload"]))
+    with get_db() as connection:
+        rows = connection.execute(
+            "SELECT * FROM speed_tiers WHERE active = 1 ORDER BY download_limit_mbps, upload_limit_mbps"
+        ).fetchall()
+    return [
+        {
+            "id": row["id"],
+            "key": f"{row['download_limit_mbps']:g}/{row['upload_limit_mbps']:g}",
+            "download": row["download_limit_mbps"],
+            "upload": row["upload_limit_mbps"],
+            "profile": row["router_profile"],
+            "label": f"{row['download_limit_mbps']:g}/{row['upload_limit_mbps']:g} Mbps down/up - {row['router_profile']}",
+        }
+        for row in rows
+    ]
+
+
+def router_profile_for_speed(download_mbps, upload_mbps):
+    with get_db() as connection:
+        row = connection.execute(
+            "SELECT router_profile FROM speed_tiers WHERE active = 1 AND download_limit_mbps = ? AND upload_limit_mbps = ?",
+            (download_mbps, upload_mbps),
+        ).fetchone()
+    if row:
+        return row["router_profile"]
+    return hardware.router_adapter.rate_profile(download_mbps, upload_mbps)
+
+
+def parse_speed_tier(payload):
+    try:
+        download = float(payload.get("download_limit_mbps"))
+        upload = float(payload.get("upload_limit_mbps"))
+    except (TypeError, ValueError):
+        return None, "Enter valid download and upload speeds."
+    profile = str(payload.get("router_profile", "")).strip()[:64]
+    if not math.isfinite(download) or not math.isfinite(upload) or not (0 < download <= 1000) or not (0 < upload <= 1000):
+        return None, "Speeds must be greater than 0 and no more than 1000 Mbps."
+    if not profile:
+        return None, "Enter an existing RouterOS HotSpot user profile name."
+    return {"download": download, "upload": upload, "profile": profile}, None
 
 # #clients view: a device quiet for this long is flagged as idle so abandoned sessions stand out.
 SESSION_IDLE_SECONDS = 300
@@ -807,7 +858,7 @@ def record_voucher_attempt(actor, succeeded):
             connection.execute("DELETE FROM voucher_attempts WHERE actor = ?", (actor,))
 
 
-def activate_client_session(minutes, source, mac_address=None, label=None, download_limit_mbps=2, upload_limit_mbps=1):
+def activate_client_session(minutes, source, mac_address=None, label=None, download_limit_mbps=2, upload_limit_mbps=1, router_profile=None):
     """Credit minutes to the portal device, stacking onto its live session when it already has one.
 
     ``source`` stays the audit word the logs already use; ``label`` is the human line the #clients
@@ -833,7 +884,7 @@ def activate_client_session(minutes, source, mac_address=None, label=None, downl
                 UPDATE sessions
                 SET minutes_left = ?, granted_minutes = granted_minutes + ?, status = 'active',
                     last_seen = ?, expires_at = ?, source = ?,
-                    download_limit_mbps = ?, upload_limit_mbps = ?
+                    download_limit_mbps = ?, upload_limit_mbps = ?, router_profile = ?
                 WHERE id = ?
                 """,
                 (
@@ -844,6 +895,7 @@ def activate_client_session(minutes, source, mac_address=None, label=None, downl
                     merged_source(current["source"], credit),
                     download_limit_mbps,
                     upload_limit_mbps,
+                    router_profile or "",
                     current["id"],
                 ),
             )
@@ -854,8 +906,8 @@ def activate_client_session(minutes, source, mac_address=None, label=None, downl
     with get_db() as connection:
         cursor = connection.execute(
             """
-            INSERT INTO sessions (mac_address, ip_address, minutes_left, status, started_at, last_seen, expires_at, source, granted_minutes, download_limit_mbps, upload_limit_mbps)
-            VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO sessions (mac_address, ip_address, minutes_left, status, started_at, last_seen, expires_at, source, granted_minutes, download_limit_mbps, upload_limit_mbps, router_profile)
+            VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 device,
@@ -868,6 +920,7 @@ def activate_client_session(minutes, source, mac_address=None, label=None, downl
                 minutes,
                 download_limit_mbps,
                 upload_limit_mbps,
+                router_profile or "",
             ),
         )
         session_id = cursor.lastrowid
@@ -929,7 +982,7 @@ def activate_device_session(minutes, source, device_id, ip_address=None, label=N
     return session_id
 
 
-def router_authorize(device, minutes, download_mbps=None, upload_mbps=None):
+def router_authorize(device, minutes, download_mbps=None, upload_mbps=None, profile=None):
     """Push paid time to the hotspot. Simulation, or a key without a MAC, is a no-op."""
     if not hardware.real_mode():
         return None
@@ -942,7 +995,8 @@ def router_authorize(device, minutes, download_mbps=None, upload_mbps=None):
         )
         return None
     try:
-        result = router_adapter.authorize(device, minutes, download_mbps=download_mbps, upload_mbps=upload_mbps)
+        chosen_profile = profile or router_profile_for_speed(download_mbps, upload_mbps)
+        result = router_adapter.authorize(device, minutes, download_mbps=download_mbps, upload_mbps=upload_mbps, profile=chosen_profile)
     except Exception as error:  # a router hiccup must never block a settlement
         write_log("router", f"Could not authorize {device} on the hotspot: {error}", "warning")
         return None
@@ -978,7 +1032,13 @@ def sync_session_to_router(session_id):
     if row["status"] != "active":
         return router_release(device, row["status"])
     minutes = max(1, (session_remaining_seconds(row) + 59) // 60)
-    return router_authorize(device, minutes, row["download_limit_mbps"], row["upload_limit_mbps"])
+    return router_authorize(
+        device,
+        minutes,
+        row["download_limit_mbps"],
+        row["upload_limit_mbps"],
+        profile=row["router_profile"] or None,
+    )
 
 
 @app.post("/portal/redeem")
@@ -1007,6 +1067,7 @@ def portal_redeem():
         label=f"Voucher {voucher['code']}",
         download_limit_mbps=voucher["download_limit_mbps"],
         upload_limit_mbps=voucher["upload_limit_mbps"],
+        router_profile=voucher["router_profile"],
     )
     return redirect(url_for("portal"))
 
@@ -1573,8 +1634,8 @@ def create_vouchers():
         for _ in range(count):
             code = secrets.token_hex(4).upper()
             connection.execute(
-                "INSERT INTO vouchers (code, minutes, download_limit_mbps, upload_limit_mbps, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (code, minutes, tier["download"], tier["upload"], now_text(), expires_at),
+                "INSERT INTO vouchers (code, minutes, download_limit_mbps, upload_limit_mbps, router_profile, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (code, minutes, tier["download"], tier["upload"], tier["profile"], now_text(), expires_at),
             )
     write_log("voucher", f"Generated {count} {tier['profile']} vouchers worth {minutes} minutes")
     return redirect(url_for("dashboard") + "#vouchers")
@@ -1804,13 +1865,94 @@ def voucher_speed_tiers_api():
     return jsonify({"tiers": voucher_speed_tiers()})
 
 
+@app.get("/api/admin/speed-tiers")
+@admin_api_required
+def speed_tiers_api():
+    return jsonify({"tiers": voucher_speed_tiers()})
+
+
+@app.post("/api/admin/speed-tiers")
+@admin_api_required
+def create_speed_tier_api():
+    tier, error = parse_speed_tier(request.get_json(silent=True) or {})
+    if error:
+        return jsonify({"error": error}), 400
+    with get_db() as connection:
+        existing = connection.execute(
+            "SELECT * FROM speed_tiers WHERE (download_limit_mbps = ? AND upload_limit_mbps = ?) OR router_profile = ?",
+            (tier["download"], tier["upload"], tier["profile"]),
+        ).fetchall()
+        if existing:
+            match = next(
+                (
+                    row for row in existing
+                    if row["download_limit_mbps"] == tier["download"]
+                    and row["upload_limit_mbps"] == tier["upload"]
+                    and row["router_profile"] == tier["profile"]
+                ),
+                None,
+            )
+            if match and not match["active"]:
+                connection.execute("UPDATE speed_tiers SET active = 1 WHERE id = ?", (match["id"],))
+                tier_id = match["id"]
+            else:
+                return jsonify({"error": "A speed or RouterOS profile is already assigned to another tier."}), 409
+        else:
+            cursor = connection.execute(
+                "INSERT INTO speed_tiers (download_limit_mbps, upload_limit_mbps, router_profile) VALUES (?, ?, ?)",
+                (tier["download"], tier["upload"], tier["profile"]),
+            )
+            tier_id = cursor.lastrowid
+    write_log("settings", f"Added speed tier {tier['download']:g}/{tier['upload']:g} Mbps ({tier['profile']})")
+    return jsonify({"id": tier_id}), 201
+
+
+@app.put("/api/admin/speed-tiers/<int:tier_id>")
+@admin_api_required
+def update_speed_tier_api(tier_id):
+    tier, error = parse_speed_tier(request.get_json(silent=True) or {})
+    if error:
+        return jsonify({"error": error}), 400
+    with get_db() as connection:
+        current = connection.execute("SELECT id FROM speed_tiers WHERE id = ? AND active = 1", (tier_id,)).fetchone()
+        if current is None:
+            return jsonify({"error": "Speed tier not found."}), 404
+        conflict = connection.execute(
+            "SELECT id FROM speed_tiers WHERE id != ? AND (download_limit_mbps = ? AND upload_limit_mbps = ? OR router_profile = ?)",
+            (tier_id, tier["download"], tier["upload"], tier["profile"]),
+        ).fetchone()
+        if conflict:
+            return jsonify({"error": "A speed or RouterOS profile is already assigned to another tier."}), 409
+        connection.execute(
+            "UPDATE speed_tiers SET download_limit_mbps = ?, upload_limit_mbps = ?, router_profile = ? WHERE id = ?",
+            (tier["download"], tier["upload"], tier["profile"], tier_id),
+        )
+    write_log("settings", f"Updated speed tier {tier['download']:g}/{tier['upload']:g} Mbps ({tier['profile']})")
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/admin/speed-tiers/<int:tier_id>")
+@admin_api_required
+def archive_speed_tier_api(tier_id):
+    with get_db() as connection:
+        current = connection.execute("SELECT * FROM speed_tiers WHERE id = ? AND active = 1", (tier_id,)).fetchone()
+        if current is None:
+            return jsonify({"error": "Speed tier not found."}), 404
+        remaining = connection.execute("SELECT COUNT(*) AS total FROM speed_tiers WHERE active = 1").fetchone()["total"]
+        if remaining <= 1:
+            return jsonify({"error": "At least one active speed tier is required."}), 409
+        connection.execute("UPDATE speed_tiers SET active = 0 WHERE id = ?", (tier_id,))
+    write_log("settings", f"Archived speed tier {current['router_profile']}", "warning")
+    return jsonify({"ok": True})
+
+
 @app.get("/api/admin/voucher-inventory-tiers")
 @admin_api_required
 def voucher_inventory_tiers_api():
     tiers = voucher_speed_tiers()
     with get_db() as connection:
         vouchers = connection.execute(
-            "SELECT code, download_limit_mbps, upload_limit_mbps FROM vouchers ORDER BY id DESC LIMIT 8"
+            "SELECT code, download_limit_mbps, upload_limit_mbps, router_profile FROM vouchers ORDER BY id DESC LIMIT 8"
         ).fetchall()
     inventory = []
     for voucher in vouchers:
@@ -1825,7 +1967,10 @@ def voucher_inventory_tiers_api():
         inventory.append(
             {
                 "code": voucher["code"],
-                "label": tier["label"] if tier else f"{voucher['download_limit_mbps']:g}/{voucher['upload_limit_mbps']:g} Mbps down/up",
+                "label": (
+                    f"{voucher['download_limit_mbps']:g}/{voucher['upload_limit_mbps']:g} Mbps down/up - "
+                    f"{voucher['router_profile'] or (tier['profile'] if tier else 'unmapped')}"
+                ),
             }
         )
     return jsonify({"vouchers": inventory})
