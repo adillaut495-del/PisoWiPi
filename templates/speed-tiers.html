@@ -6,7 +6,7 @@
       <p class="muted">Manage the speeds offered on new vouchers and sessions.</p>
     </div>
   </div>
-  <p class="speed-tier-note">The RouterOS user profile must already exist. Set its <code>rate-limit</code> in upload/download order to match the values below.</p>
+  <p class="speed-tier-note">In real hardware mode, saving adds or updates the named RouterOS user profile. Rates here are download/upload; RouterOS stores <code>rate-limit</code> as upload/download. Simulation mode saves locally only. Archiving removes a tier from future choices but leaves its router profile for existing clients.</p>
   <div class="speed-tier-editor" id="speed-tier-editor">
     <label>Download (Mbps)<input id="tier-download" type="number" min="0.1" max="1000" step="0.1" required></label>
     <label>Upload (Mbps)<input id="tier-upload" type="number" min="0.1" max="1000" step="0.1" required></label>

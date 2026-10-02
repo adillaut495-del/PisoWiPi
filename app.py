@@ -264,6 +264,8 @@ def router_profile_for_speed(download_mbps, upload_mbps):
 
 
 def parse_speed_tier(payload):
+    if not isinstance(payload, dict):
+        return None, "Speed tier data must be an object."
     try:
         download = float(payload.get("download_limit_mbps"))
         upload = float(payload.get("upload_limit_mbps"))
@@ -274,7 +276,19 @@ def parse_speed_tier(payload):
         return None, "Speeds must be greater than 0 and no more than 1000 Mbps."
     if not profile:
         return None, "Enter an existing RouterOS HotSpot user profile name."
+    if profile.lower() in {"default", "default-trial"}:
+        return None, "Use a dedicated RouterOS profile name, not a built-in profile."
     return {"download": download, "upload": upload, "profile": profile}, None
+
+
+def push_speed_tier_to_router(tier):
+    try:
+        return hardware.router_adapter.sync_hotspot_user_profile(
+            tier["profile"], tier["download"], tier["upload"]
+        ), None
+    except Exception as error:
+        write_log("router", f"Could not sync speed tier {tier['profile']} to RouterOS: {error}", "warning")
+        return None, str(error)
 
 # #clients view: a device quiet for this long is flagged as idle so abandoned sessions stand out.
 SESSION_IDLE_SECONDS = 300
@@ -1882,21 +1896,24 @@ def create_speed_tier_api():
             "SELECT * FROM speed_tiers WHERE (download_limit_mbps = ? AND upload_limit_mbps = ?) OR router_profile = ?",
             (tier["download"], tier["upload"], tier["profile"]),
         ).fetchall()
-        if existing:
-            match = next(
-                (
-                    row for row in existing
-                    if row["download_limit_mbps"] == tier["download"]
-                    and row["upload_limit_mbps"] == tier["upload"]
-                    and row["router_profile"] == tier["profile"]
-                ),
-                None,
-            )
-            if match and not match["active"]:
-                connection.execute("UPDATE speed_tiers SET active = 1 WHERE id = ?", (match["id"],))
-                tier_id = match["id"]
-            else:
-                return jsonify({"error": "A speed or RouterOS profile is already assigned to another tier."}), 409
+    match = next(
+        (
+            row for row in existing
+            if row["download_limit_mbps"] == tier["download"]
+            and row["upload_limit_mbps"] == tier["upload"]
+            and row["router_profile"] == tier["profile"]
+        ),
+        None,
+    )
+    if existing and not (match and not match["active"]):
+        return jsonify({"error": "A speed or RouterOS profile is already assigned to another tier."}), 409
+    router_sync, sync_error = push_speed_tier_to_router(tier)
+    if sync_error:
+        return jsonify({"error": f"RouterOS profile sync failed; tier was not saved: {sync_error}"}), 502
+    with get_db() as connection:
+        if match:
+            connection.execute("UPDATE speed_tiers SET active = 1 WHERE id = ?", (match["id"],))
+            tier_id = match["id"]
         else:
             cursor = connection.execute(
                 "INSERT INTO speed_tiers (download_limit_mbps, upload_limit_mbps, router_profile) VALUES (?, ?, ?)",
@@ -1904,7 +1921,7 @@ def create_speed_tier_api():
             )
             tier_id = cursor.lastrowid
     write_log("settings", f"Added speed tier {tier['download']:g}/{tier['upload']:g} Mbps ({tier['profile']})")
-    return jsonify({"id": tier_id}), 201
+    return jsonify({"id": tier_id, "router_sync": router_sync}), 201
 
 
 @app.put("/api/admin/speed-tiers/<int:tier_id>")
@@ -1923,12 +1940,16 @@ def update_speed_tier_api(tier_id):
         ).fetchone()
         if conflict:
             return jsonify({"error": "A speed or RouterOS profile is already assigned to another tier."}), 409
+    router_sync, sync_error = push_speed_tier_to_router(tier)
+    if sync_error:
+        return jsonify({"error": f"RouterOS profile sync failed; tier was not saved: {sync_error}"}), 502
+    with get_db() as connection:
         connection.execute(
             "UPDATE speed_tiers SET download_limit_mbps = ?, upload_limit_mbps = ?, router_profile = ? WHERE id = ?",
             (tier["download"], tier["upload"], tier["profile"], tier_id),
         )
     write_log("settings", f"Updated speed tier {tier['download']:g}/{tier['upload']:g} Mbps ({tier['profile']})")
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "router_sync": router_sync})
 
 
 @app.delete("/api/admin/speed-tiers/<int:tier_id>")
@@ -2066,6 +2087,22 @@ def router_sweep_loop():
             write_log("router", f"Hotspot sweep failed: {error}", "warning")
 
 
+def sync_active_speed_tiers_to_router():
+    if not hardware.real_mode():
+        return
+    for tier in voucher_speed_tiers():
+        try:
+            result = hardware.router_adapter.sync_hotspot_user_profile(
+                tier["profile"], tier["download"], tier["upload"]
+            )
+            write_log(
+                "router",
+                f"Startup speed-tier sync {result['status']}: {tier['profile']} rate-limit={result.get('rate_limit', 'unchanged')}",
+            )
+        except Exception as error:
+            write_log("router", f"Startup speed-tier sync failed for {tier['profile']}: {error}", "warning")
+
+
 def start_hardware():
     hardware.coin_listener = CoinPulseListener(record_hardware_coin)
     result = hardware.coin_listener.start()
@@ -2073,6 +2110,11 @@ def start_hardware():
     # A restart drops the quiet-window timers, so settle any request whose coins are already quiet.
     settle_quiet_coin_requests()
     if hardware.real_mode():
+        threading.Thread(
+            target=sync_active_speed_tiers_to_router,
+            name="piso-speed-tier-sync",
+            daemon=True,
+        ).start()
         threading.Thread(target=router_sweep_loop, name="piso-hotspot-sweep", daemon=True).start()
         write_log("router", f"Hotspot sweep running every {hardware.router_adapter.config.router_sweep_seconds}s")
 

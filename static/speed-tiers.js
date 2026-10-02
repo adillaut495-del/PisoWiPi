@@ -112,10 +112,16 @@
       router_profile: profile.value,
     };
     try {
-      await request(editingId ? `${api}/${editingId}` : api, {
+      const result = await request(editingId ? `${api}/${editingId}` : api, {
         method: editingId ? 'PUT' : 'POST',
         body: JSON.stringify(values),
       });
+      if (result.router_sync?.status === 'simulated') {
+        await loadTiers();
+        resetEditor();
+        setMessage('Saved locally only; the router was not updated in simulation mode.', true);
+        return;
+      }
       window.location.reload();
     } catch (error) {
       setMessage(error.message, true);

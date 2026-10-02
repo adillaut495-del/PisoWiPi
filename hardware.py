@@ -126,6 +126,40 @@ class MikroTikRouterAdapter:
             return []
         return users if isinstance(users, list) else [users]
 
+    def sync_hotspot_user_profile(self, name, download_mbps, upload_mbps):
+        """Create or update a RouterOS profile with its rate-limit (upload/download)."""
+        if self.config.mode != "real":
+            return {"status": "simulated", "name": name}
+        profiles = self._request("GET", "ip/hotspot/user/profile") or []
+        profiles = profiles if isinstance(profiles, list) else [profiles]
+        existing = next((profile for profile in profiles if profile.get("name") == name), None)
+        rate_limit = f"{round(float(upload_mbps) * 1000):g}k/{round(float(download_mbps) * 1000):g}k"
+        if existing:
+            self._request(
+                "PATCH",
+                f"ip/hotspot/user/profile/{existing['.id']}",
+                json={"rate-limit": rate_limit},
+            )
+            status = "updated"
+        else:
+            self._request(
+                "PUT",
+                "ip/hotspot/user/profile",
+                json={
+                    "name": name,
+                    "rate-limit": rate_limit,
+                    "shared-users": "1",
+                    "keepalive-timeout": "3m",
+                    "idle-timeout": "none",
+                    "session-timeout": "0s",
+                    "add-mac-cookie": "yes",
+                    "mac-cookie-timeout": "1d",
+                    "open-status-page": "http-login",
+                },
+            )
+            status = "created"
+        return {"status": status, "name": name, "rate_limit": rate_limit}
+
     def hotspot_user(self, mac_address):
         """The hotspot user that belongs to one device, matched by name or bound MAC."""
         wanted = (mac_address or "").strip().lower()
