@@ -10,7 +10,7 @@ import subprocess
 import threading
 import time
 
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import hardware
@@ -1394,6 +1394,7 @@ def dashboard():
         active_users=client_totals["active"],
         metrics=metrics,
         hardware=hardware,
+        hardware_mode=hardware_state["mode"],
         internet=uplink,
         ssid=setting("ssid", "PisoPilot WiFi"),
         session_mode=setting("session_mode", "time"),
@@ -1745,6 +1746,33 @@ def status():
 @admin_required
 def hardware_status_api():
     return jsonify(hardware_status())
+
+
+@app.post("/hardware/coin-acceptor/<action>")
+@admin_required
+def hardware_coin_acceptor_action(action):
+    if action not in {"start", "stop"}:
+        abort(404)
+    if not hardware.real_mode():
+        write_log("hardware", f"Ignored coin acceptor {action}: hardware mode is simulation", "warning")
+        return redirect(url_for("dashboard") + "#hardware")
+
+    if hardware.coin_listener is None:
+        hardware.coin_listener = CoinPulseListener(record_hardware_coin)
+    if action == "stop":
+        hardware.coin_listener.stop()
+        result = {"status": "offline", "detail": "Coin acceptor stopped by admin"}
+    elif hardware.coin_listener.listening:
+        result = {"status": "online", "detail": "Coin GPIO listener was already running"}
+    else:
+        result = hardware.coin_listener.start()
+
+    detail = result.get("detail")
+    message = f"Admin {action} coin acceptor: {result['status']}"
+    if detail:
+        message += f" ({detail})"
+    write_log("hardware", message, "warning" if result["status"] == "offline" else "info")
+    return redirect(url_for("dashboard") + "#hardware")
 
 
 @app.get("/api/internet-status")
