@@ -218,9 +218,9 @@
 # first time. That is expected and unavoidable on a local-only name.
 :local pisoLoginBy "mac,https,http-chap,cookie,mac-cookie"
 :if ([:len [/ip/hotspot/profile find where name=$hotspotProfile]] = 0) do={
-/ip/hotspot/profile add name=$hotspotProfile hotspot-address=$guestGateway dns-name=$hotspotDnsName html-directory=hotspot login-by=$pisoLoginBy http-cookie-lifetime=1d use-radius=no
+/ip/hotspot/profile add name=$hotspotProfile hotspot-address=$guestGateway dns-name=$hotspotDnsName html-directory=hotspot login-by=$pisoLoginBy mac-auth-mode=mac-as-username-and-password http-cookie-lifetime=1d use-radius=no
 }
-/ip/hotspot/profile set [find where name=$hotspotProfile] hotspot-address=$guestGateway dns-name=$hotspotDnsName login-by=$pisoLoginBy http-cookie-lifetime=1d use-radius=no
+/ip/hotspot/profile set [find where name=$hotspotProfile] hotspot-address=$guestGateway dns-name=$hotspotDnsName login-by=$pisoLoginBy mac-auth-mode=mac-as-username-and-password http-cookie-lifetime=1d use-radius=no
 :do {
 /ip/hotspot/profile set [find where name=$hotspotProfile] ssl-certificate=$hotspotCertName
 :log info ("PisoPilot: HotSpot serves https with " . $hotspotCertName)
@@ -231,9 +231,11 @@
 :if ([:len [/ip/hotspot/user/profile find where name=$packageProfile]] = 0) do={
 /ip/hotspot/user/profile add name=$packageProfile rate-limit="1M/2M" shared-users=1 keepalive-timeout=3m idle-timeout=none session-timeout=0s add-mac-cookie=yes mac-cookie-timeout=1d open-status-page=http-login
 }
+/ip/hotspot/user/profile set [find where name=$packageProfile] rate-limit="1M/2M"
 :if ([:len [/ip/hotspot/user/profile find where name=$premiumProfile]] = 0) do={
 /ip/hotspot/user/profile add name=$premiumProfile rate-limit="2M/5M" shared-users=1 keepalive-timeout=3m idle-timeout=none session-timeout=0s add-mac-cookie=yes mac-cookie-timeout=1d open-status-page=http-login
 }
+/ip/hotspot/user/profile set [find where name=$premiumProfile] rate-limit="2M/5M"
  
 :if ([:len [/ip/hotspot find where name=$hotspotServer]] = 0) do={
 /ip/hotspot add name=$hotspotServer interface=$guestBridge profile=$hotspotProfile address-pool=none addresses-per-mac=2 login-timeout=1m
@@ -249,6 +251,7 @@
 # proves nothing either way. Diagnose a client with /ip/hotspot/host print and
 # by browsing from the phone, not from the log.
 /ip/hotspot set [find where name=$hotspotServer] interface=$guestBridge profile=$hotspotProfile addresses-per-mac=2
+/ip/hotspot enable [find where name=$hotspotServer]
  
 # Only the Pi is walled-gardened. Deliberately NOT the hotspot's own dns-name:
 # a walled-garden entry exempts that host from interception, so a blocked client
@@ -293,6 +296,15 @@
 /ip/firewall/filter set [find where comment="PisoPilot: walled garden to the portal"] in-interface=$guestBridge dst-address=$portalIp
 /ip/firewall/filter set [find where comment="PisoPilot: walled garden to the router DNS"] in-interface=$guestBridge dst-address=$guestGateway
 /ip/firewall/filter set [find where comment="PisoPilot: drop unpaid clients"] in-interface=$guestBridge
+
+# HotSpot rate limits use dynamic simple queues. FastTrack bypasses those
+# queues, so accept only authenticated HotSpot established traffic before any
+# FastTrack rule; other forwarded traffic keeps using FastTrack as before.
+:if ([:len [/ip/firewall/filter find where comment="PisoPilot: preserve HotSpot queues"]] = 0) do={
+/ip/firewall/filter add chain=forward action=accept connection-state=established,related hotspot=auth comment="PisoPilot: preserve HotSpot queues"
+}
+/ip/firewall/filter set [find where comment="PisoPilot: preserve HotSpot queues"] chain=forward action=accept connection-state=established,related hotspot=auth
+/ip/firewall/filter move [find where comment="PisoPilot: preserve HotSpot queues"] 0
  
 :local hsDynamicCount [:len [/ip/firewall/filter find where dynamic=yes]]
 :log info ("PisoPilot: " . $hsDynamicCount . " dynamic HotSpot rule(s) in the filter table")

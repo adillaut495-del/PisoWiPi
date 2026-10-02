@@ -9,6 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='vouchers.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='voucher-tiers.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='modals.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='coin-flow.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='net-status.css') }}">
@@ -245,6 +246,7 @@
   </script>
   <script src="{{ url_for('static', filename='sound.js') }}"></script>
   <script src="{{ url_for('static', filename='net-status.js') }}"></script>
+  <script src="{{ url_for('static', filename='voucher-tiers.js') }}" defer></script>
   <script>
     window.PISO_COIN_QUEUE = {{ coin_requests|tojson }};
     window.PISO_COIN_OPTIONS = {{ coin_options|tojson }};

@@ -67,6 +67,8 @@ def initialize_database():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 code TEXT UNIQUE NOT NULL,
                 minutes INTEGER NOT NULL,
+                download_limit_mbps REAL NOT NULL DEFAULT 2,
+                upload_limit_mbps REAL NOT NULL DEFAULT 1,
                 status TEXT NOT NULL DEFAULT 'unused',
                 mac_address TEXT,
                 created_at TEXT NOT NULL,
@@ -142,6 +144,14 @@ def initialize_database():
             connection.execute("ALTER TABLE sessions ADD COLUMN granted_minutes INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError:
             pass
+        try:
+            connection.execute("ALTER TABLE vouchers ADD COLUMN download_limit_mbps REAL NOT NULL DEFAULT 2")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            connection.execute("ALTER TABLE vouchers ADD COLUMN upload_limit_mbps REAL NOT NULL DEFAULT 1")
+        except sqlite3.OperationalError:
+            pass
         connection.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('minutes_per_peso', '10')"
         )
@@ -190,6 +200,30 @@ def setting(key, default=""):
 
 
 COIN_DENOMINATIONS = (1, 5, 10, 20)
+
+
+def voucher_speed_tiers():
+    config = hardware.router_adapter.config
+    profiles = config.rate_profile_map()
+    profiles.setdefault("2/1", config.router_default_profile)
+    tiers = []
+    for key, profile in profiles.items():
+        try:
+            download, upload = (float(value) for value in key.split("/", 1))
+        except (TypeError, ValueError):
+            continue
+        if download <= 0 or upload <= 0:
+            continue
+        tiers.append(
+            {
+                "key": key,
+                "download": download,
+                "upload": upload,
+                "profile": profile,
+                "label": f"{download:g}/{upload:g} Mbps down/up - {profile}",
+            }
+        )
+    return sorted(tiers, key=lambda tier: (tier["download"], tier["upload"]))
 
 # #clients view: a device quiet for this long is flagged as idle so abandoned sessions stand out.
 SESSION_IDLE_SECONDS = 300
@@ -773,7 +807,7 @@ def record_voucher_attempt(actor, succeeded):
             connection.execute("DELETE FROM voucher_attempts WHERE actor = ?", (actor,))
 
 
-def activate_client_session(minutes, source, mac_address=None, label=None):
+def activate_client_session(minutes, source, mac_address=None, label=None, download_limit_mbps=2, upload_limit_mbps=1):
     """Credit minutes to the portal device, stacking onto its live session when it already has one.
 
     ``source`` stays the audit word the logs already use; ``label`` is the human line the #clients
@@ -798,7 +832,8 @@ def activate_client_session(minutes, source, mac_address=None, label=None):
                 """
                 UPDATE sessions
                 SET minutes_left = ?, granted_minutes = granted_minutes + ?, status = 'active',
-                    last_seen = ?, expires_at = ?, source = ?
+                    last_seen = ?, expires_at = ?, source = ?,
+                    download_limit_mbps = ?, upload_limit_mbps = ?
                 WHERE id = ?
                 """,
                 (
@@ -807,6 +842,8 @@ def activate_client_session(minutes, source, mac_address=None, label=None):
                     now_text(),
                     expires_at.isoformat(timespec="seconds"),
                     merged_source(current["source"], credit),
+                    download_limit_mbps,
+                    upload_limit_mbps,
                     current["id"],
                 ),
             )
@@ -817,8 +854,8 @@ def activate_client_session(minutes, source, mac_address=None, label=None):
     with get_db() as connection:
         cursor = connection.execute(
             """
-            INSERT INTO sessions (mac_address, ip_address, minutes_left, status, started_at, last_seen, expires_at, source, granted_minutes)
-            VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)
+            INSERT INTO sessions (mac_address, ip_address, minutes_left, status, started_at, last_seen, expires_at, source, granted_minutes, download_limit_mbps, upload_limit_mbps)
+            VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 device,
@@ -829,6 +866,8 @@ def activate_client_session(minutes, source, mac_address=None, label=None):
                 (started + timedelta(minutes=minutes)).isoformat(timespec="seconds"),
                 merged_source(None, credit),
                 minutes,
+                download_limit_mbps,
+                upload_limit_mbps,
             ),
         )
         session_id = cursor.lastrowid
@@ -961,7 +1000,14 @@ def portal_redeem():
             (mac_address or portal_device_id(), now_text(), voucher["id"]),
         )
     record_voucher_attempt(actor, True)
-    activate_client_session(voucher["minutes"], "voucher", mac_address, label=f"Voucher {voucher['code']}")
+    activate_client_session(
+        voucher["minutes"],
+        "voucher",
+        mac_address,
+        label=f"Voucher {voucher['code']}",
+        download_limit_mbps=voucher["download_limit_mbps"],
+        upload_limit_mbps=voucher["upload_limit_mbps"],
+    )
     return redirect(url_for("portal"))
 
 
@@ -1518,15 +1564,19 @@ def create_vouchers():
     count = min(max(request.form.get("count", type=int) or 0, 1), 500)
     minutes = request.form.get("minutes", type=int) or 60
     expires_days = request.form.get("expires_days", type=int) or 30
+    tiers = {tier["key"]: tier for tier in voucher_speed_tiers()}
+    tier = tiers.get(request.form.get("speed_tier", "2/1"))
+    if tier is None:
+        abort(400)
     expires_at = (datetime.now() + timedelta(days=expires_days)).isoformat(timespec="seconds")
     with get_db() as connection:
         for _ in range(count):
             code = secrets.token_hex(4).upper()
             connection.execute(
-                "INSERT INTO vouchers (code, minutes, created_at, expires_at) VALUES (?, ?, ?, ?)",
-                (code, minutes, now_text(), expires_at),
+                "INSERT INTO vouchers (code, minutes, download_limit_mbps, upload_limit_mbps, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (code, minutes, tier["download"], tier["upload"], now_text(), expires_at),
             )
-    write_log("voucher", f"Generated {count} vouchers worth {minutes} minutes")
+    write_log("voucher", f"Generated {count} {tier['profile']} vouchers worth {minutes} minutes")
     return redirect(url_for("dashboard") + "#vouchers")
 
 
@@ -1746,6 +1796,39 @@ def status():
 @admin_required
 def hardware_status_api():
     return jsonify(hardware_status())
+
+
+@app.get("/api/admin/voucher-speed-tiers")
+@admin_api_required
+def voucher_speed_tiers_api():
+    return jsonify({"tiers": voucher_speed_tiers()})
+
+
+@app.get("/api/admin/voucher-inventory-tiers")
+@admin_api_required
+def voucher_inventory_tiers_api():
+    tiers = voucher_speed_tiers()
+    with get_db() as connection:
+        vouchers = connection.execute(
+            "SELECT code, download_limit_mbps, upload_limit_mbps FROM vouchers ORDER BY id DESC LIMIT 8"
+        ).fetchall()
+    inventory = []
+    for voucher in vouchers:
+        tier = next(
+            (
+                item for item in tiers
+                if item["download"] == voucher["download_limit_mbps"]
+                and item["upload"] == voucher["upload_limit_mbps"]
+            ),
+            None,
+        )
+        inventory.append(
+            {
+                "code": voucher["code"],
+                "label": tier["label"] if tier else f"{voucher['download_limit_mbps']:g}/{voucher['upload_limit_mbps']:g} Mbps down/up",
+            }
+        )
+    return jsonify({"vouchers": inventory})
 
 
 @app.post("/hardware/coin-acceptor/<action>")

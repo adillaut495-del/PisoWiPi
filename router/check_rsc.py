@@ -94,6 +94,7 @@ KNOWN_PROPERTIES: dict[str, set[str]] = {
         "dns-name",
         "html-directory",
         "login-by",
+        "mac-auth-mode",
         "http-cookie-lifetime",
         "split-user-domain",
         "use-radius",

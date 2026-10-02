@@ -1,0 +1,52 @@
+.voucher-form-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+}
+
+.voucher-form-grid select {
+  min-width: 0;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  background: #fbfdfa;
+  font: 600 0.82rem "DM Mono", monospace;
+}
+
+.voucher-form-grid select:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+.voucher-form-grid button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.voucher-tier-error {
+  grid-column: 1 / -1;
+  color: var(--red);
+}
+
+.voucher-tier-info {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font: 0.65rem "DM Mono", monospace;
+}
+
+@media (max-width: 650px) {
+  .admin-modal .modal-card {
+    min-width: 0;
+    width: 100%;
+    max-width: 560px;
+    box-sizing: border-box;
+  }
+
+  .voucher-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-modal .modal-card form.voucher-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
