@@ -444,6 +444,33 @@ def check_option_114_wiring(text: str) -> list[str]:
             "api.json is never fetched - option 114 points at a URL that would "
             "answer 404, so the client has nothing to open"
         )
+    # hotspot/login.html is a RESERVED name the HotSpot owns: /tool fetch refuses
+    # to overwrite it, so a direct dst-path="hotspot/login.html" always fails and
+    # every blocked customer gets the RouterOS form. It has to be fetched to a
+    # scratch name and moved into place.
+    if re.search(r"/tool fetch[^\n]*dst-path=[\"']?hotspot/login\.html", text):
+        problems.append(
+            "login.html is fetched straight to hotspot/login.html - that name is "
+            "reserved by the HotSpot and RouterOS refuses the write ('could not "
+            "fetch login.html'). Fetch it to a scratch name and /file move it "
+            "into place instead."
+        )
+    if "/tool fetch" in text and "hotspot/login.html" in text:
+        # RouterOS has NO /file move command; the file is renamed with /file set.
+        # Comments are stripped first: the script explains this in prose, and the
+        # words "/file move" in a comment are not a command.
+        offenders = [line for line in bare.splitlines() if re.search(r"/file\s+move\b", line)]
+        if offenders:
+            problems.append(
+                "/file move does not exist in RouterOS ('bad command name move') on "
+                f"line(s) {offenders[:2]} - rename the file instead: "
+                "/file set [find where name=...] name=hotspot/login.html"
+            )
+        elif not re.search(r"/file\s+set[^\n]*name=[\"']?hotspot/login\.html", text):
+            problems.append(
+                "the login page is never renamed into hotspot/login.html - without "
+                "that rename the HotSpot keeps serving its own login form"
+            )
     # The mistakes the router actually reported, kept as rules now that the
     # property table can no longer catch them (they are all *valid* names that
     # mean the wrong thing, or a valid value with no data type).
