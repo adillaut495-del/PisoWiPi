@@ -299,14 +299,59 @@ class MikroTikRouterAdapter:
         return {"status": "waiting-for-client-traffic", "name": mac_address}
 
 
+def gpio_backend_report():
+    """Which pin backend gpiozero actually loaded, and how it was reached.
+
+    Used in fault messages because the honest answer is worth far more to an
+    operator than a guessed cause: "LGPIOFactory on gpiochip0 via lgpio 0.2.2.0"
+    or "none resolved (no usable pin factory)" says exactly where to look.
+    """
+    try:
+        import importlib.metadata as metadata
+    except ImportError:  # pragma: no cover - Python < 3.8
+        metadata = None
+
+    try:
+        from gpiozero import Device
+
+        factory = Device.pin_factory
+    except Exception as error:  # pragma: no cover - defensive
+        return f"unknown ({error})"
+
+    if factory is None:
+        return "none resolved (gpiozero loaded no usable pin factory)"
+
+    name = type(factory).__name__
+    chip = getattr(factory, "chip", None)
+    detail = f"{name} on gpiochip{chip}" if chip is not None else name
+
+    # Name the backing library and version: that is what the operator installs.
+    if "LGPIO" in name.upper():
+        version = None
+        if metadata is not None:
+            for dist in ("lgpio", "rpi-lgpio"):
+                try:
+                    version = metadata.version(dist)
+                    break
+                except Exception:
+                    continue
+        return f"{detail} via lgpio {version or '(version unknown)'}"
+    if "RPI" in name.upper():
+        return f"{detail} via RPi.GPIO"
+    if "PIGPIO" in name.upper():
+        return f"{detail} via pigpio"
+    return detail
+
+
 def describe_pin_fault(error):
     """Turn a raw GPIO exception into something the operator can act on.
 
-    ``[Errno 22] Invalid argument`` on its own is famously unhelpful: it is what
-    gpiozero raises when it falls back to the legacy ``/sys/class/gpio`` backend
-    that modern kernels no longer provide, and it is also what a bad pin number
-    looks like. The two need completely different fixes, so they are told apart
-    here instead of leaving the console to show a bare errno.
+    ``[Errno 22] Invalid argument`` on its own is famously unhelpful: gpiozero
+    passes backend errors straight through, so the same errno appears for a pin
+    number the chip rejects, a line the kernel already exports, and a pin that
+    cannot be an input. Reporting the backend that was *actually* loaded lets the
+    operator tell those apart, and anything genuinely unclassifiable is returned
+    unchanged rather than guessed at.
     """
     text = str(error).strip()
     lowered = text.lower()
@@ -314,37 +359,47 @@ def describe_pin_fault(error):
     # Some exceptions stringify with no errno ("[Errno None] ..."); drop that noise.
     if errno is None and text.startswith("[Errno None]"):
         text = text[len("[Errno None]") :].strip()
+    # The console appends its own sentence break, so do not carry a trailing
+    # full stop into the middle of the message and read as "... pin.." .
+    text = text.rstrip(".")
 
+    backend = gpio_backend_report()
+    gpio = f"GPIO{coin_gpio_hint()}"
+    # Names the real backend. Deliberately does NOT claim a /sys/class/gpio
+    # fallback: gpiozero 2.x removed the sysfs factory entirely.
+    prefix = f"{text} (backend: {backend})"
+
+    # Specific errors are matched BEFORE the "no backend" case on purpose. If no
+    # backend were loaded the claim would fail with the factory error, never with
+    # errno 22, so reaching here with a specific errno means a backend *is*
+    # driving the pin and that is the diagnosis worth giving. Checking the
+    # backend first would mask a real pin fault behind a backend message.
     if "invalid argument" in lowered or errno == 22:
-        if os.path.isdir("/sys/class/gpio"):
-            return (
-                f"{text} - GPIO{coin_gpio_hint()} rejected by /sys/class/gpio. "
-                "Check the pin number, or another program may hold the pin."
-            )
         return (
-            f"{text} - no usable GPIO backend: gpiozero fell back to /sys/class/gpio, "
-            "which this kernel no longer provides. Install the backend into the "
-            "service venv: sudo apt install -y python3-lgpio, then recreate it with "
-            "python3 -m venv --system-site-packages ~/.venv (verify with "
-            "~/.venv/bin/python -c 'import gpiozero, lgpio')."
+            f"{prefix} - the backend rejected {gpio}. On gpiozero 2.x this is the "
+            "kernel refusing the line, not a missing driver: confirm the number is a "
+            "valid BCM pin for this board (`gpioinfo` lists the usable lines), that "
+            "it is not already exported, and that no other program holds it."
         )
 
     if "already in use" in lowered or "busy" in lowered:
-        return f"{text} - another process holds this pin. Stop it and restart the service."
+        return f"{prefix} - another program holds {gpio}. Stop it and restart the service."
 
     if "permission denied" in lowered or errno == 13:
-        return f"{text} - thegpio group is required: sudo usermod -aG gpio $USER, then reboot."
-
-    if "unable to load any default pin factory" in lowered:
-        return (
-            f"{text} - gpiozero found no pin backend at all. Install one into the "
-            "service venv (python3-lgpio) and recreate the venv with --system-site-packages."
-        )
+        return f"{prefix} - the gpio group is required: sudo usermod -aG gpio $USER, then reboot."
 
     if "not a valid" in lowered or "invalid pin" in lowered or "out of range" in lowered:
-        return f"{text} - GPIO{coin_gpio_hint()} is not a valid pin on this board."
+        return f"{prefix} - {gpio} is not a valid pin on this board."
 
-    return text
+    if "unable to load any default pin factory" in lowered or backend.startswith("none"):
+        return (
+            f"{prefix} - gpiozero has no usable pin backend. Install one into the "
+            "service venv: sudo apt install -y python3-lgpio, then recreate it with "
+            "python3 -m venv --system-site-packages ~/.venv, then verify with "
+            "~/.venv/bin/python -c 'from gpiozero import Device; print(Device.pin_factory)'."
+        )
+
+    return prefix
 
 
 def coin_gpio_hint():
