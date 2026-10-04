@@ -375,11 +375,69 @@ class CoinPulseListener:
 
 router_adapter = MikroTikRouterAdapter()
 coin_listener = None
+# Why the acceptor is not claiming its pin, kept so the console can say *why*
+# instead of a bare red "Offline" that sends the operator hunting.
+coin_listener_detail = ""
 
 
 def real_mode():
     """True when the controller is allowed to drive the installed hardware."""
     return router_adapter.config.mode == "real"
+
+
+def coin_listener_detail_text():
+    """The last reason the pin could not be claimed ('' when it is healthy)."""
+    return coin_listener_detail
+
+
+def set_coin_listener_detail(detail):
+    """Record why the acceptor is not claiming, so the console can say why.
+
+    Cleared on success and set on any deliberate stop, so the dashboard never
+    shows a bare "Offline" that leaves the operator guessing.
+    """
+    global coin_listener_detail
+    coin_listener_detail = str(detail or "")
+
+
+def supervise_coin_listener(build, on_result, attempts=10, initial_delay=1.0, max_delay=15.0):
+    """Keep trying to claim the coin pin until it actually sticks.
+
+    Claiming GPIO is a one-shot operation, so the single attempt made at boot
+    used to be final: anything that went wrong once - a leftover process still
+    holding the pin after a reboot, a GPIO backend that was not importable yet,
+    a slow enumerating USB device - left the acceptor offline for the rest of
+    the process's life with nothing retrying. Coins went into the box and were
+    never counted.
+
+    ``build`` returns a fresh, unstarted listener and is re-invoked per attempt,
+    so a listener that half-claimed the pin is rebuilt rather than reused.
+    Retries use exponential backoff and then stop, so a genuinely absent
+    backend does not spin forever; the admin console can still start it by hand.
+    """
+    global coin_listener, coin_listener_detail
+    delay = initial_delay
+    result = {"status": "offline", "detail": "GPIO listener was never started"}
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            listener = build()
+            result = listener.start()
+            # Publish it even on failure: the console shows the state, and an
+            # admin "start" can then retry this same instance.
+            coin_listener = listener
+        except Exception as error:  # a peripheral must never take the portal down
+            result = {"status": "offline", "detail": str(error)}
+        if result.get("status") == "online":
+            coin_listener_detail = ""
+        else:
+            coin_listener_detail = str(result.get("detail") or result.get("status") or "unknown fault")
+        on_result(attempt, result)
+        if result.get("status") in {"online", "simulated"}:
+            return result
+        if attempt < attempts:
+            time.sleep(delay)
+            delay = min(delay * 2, max_delay)
+    return result
 
 
 def coin_listener_state():
@@ -410,6 +468,7 @@ def hardware_status():
     return {
         "mode": router_adapter.config.mode,
         "coin_acceptor": state,
+        "coin_acceptor_detail": coin_listener_detail if state == "offline" else "",
         "controller": controller,
         "gateway": router.get("status", "offline"),
         "router": router,

@@ -1647,7 +1647,10 @@ def dashboard():
     client_totals = client_summary(clients)
     hardware_state = hardware_status()
     uplink = internet_status(allow_probe=False)
-    hardware = {
+    # Named hardware_links, not hardware: a local `hardware` here shadows the
+    # `hardware` module for the whole function, so any later `hardware.something`
+    # in this view would raise AttributeError on a dict.
+    hardware_links = {
         "coin_acceptor": hardware_state["coin_acceptor"],
         "controller": hardware_state["controller"],
         "gateway": hardware_state["gateway"],
@@ -1673,8 +1676,9 @@ def dashboard():
         logs=logs,
         active_users=client_totals["active"],
         metrics=metrics,
-        hardware=hardware,
+        hardware=hardware_links,
         hardware_mode=hardware_state["mode"],
+        coin_acceptor_detail=hardware_state.get("coin_acceptor_detail", ""),
         internet=uplink,
         ssid=setting("ssid", "PisoPilot WiFi"),
         session_mode=setting("session_mode", "time"),
@@ -2066,6 +2070,9 @@ def update_coin_input_settings_api():
             listener.stop()
         hardware.coin_listener = CoinPulseListener(record_hardware_coin, configured_coin_input())
         listener_state = hardware.coin_listener.start()
+        hardware.set_coin_listener_detail(
+            "" if listener_state["status"] == "online" else listener_state.get("detail", "")
+        )
     write_log(
         "hardware",
         f"Admin updated coin input settings; GPIO{values['gpio']} listener {listener_state['status']}",
@@ -2208,7 +2215,9 @@ def hardware_coin_acceptor_action(action):
         return redirect(url_for("dashboard") + "#hardware")
 
     if hardware.coin_listener is None:
-        hardware.coin_listener = CoinPulseListener(record_hardware_coin)
+        # Build from the saved settings, not the bare defaults, so a hand start
+        # uses the same GPIO the dashboard shows.
+        hardware.coin_listener = start_coin_listener()
     if action == "stop":
         hardware.coin_listener.stop()
         result = {"status": "offline", "detail": "Coin acceptor stopped by admin"}
@@ -2216,6 +2225,10 @@ def hardware_coin_acceptor_action(action):
         result = {"status": "online", "detail": "Coin GPIO listener was already running"}
     else:
         result = hardware.coin_listener.start()
+
+    # Keep the dashboard's reason in step with what the admin just did, so a
+    # deliberate stop is not reported as an unexplained fault.
+    hardware.set_coin_listener_detail("" if result["status"] == "online" else result.get("detail", ""))
 
     detail = result.get("detail")
     message = f"Admin {action} coin acceptor: {result['status']}"
@@ -2300,12 +2313,36 @@ def sync_active_speed_tiers_to_router():
             write_log("router", f"Startup speed-tier sync failed for {tier['profile']}: {error}", "warning")
 
 
+def start_coin_listener():
+    """Build a fresh, unstarted coin listener from the current saved settings."""
+    return CoinPulseListener(record_hardware_coin, configured_coin_input())
+
+
 def start_hardware():
-    hardware.coin_listener = CoinPulseListener(record_hardware_coin, configured_coin_input())
-    result = hardware.coin_listener.start()
-    write_log("hardware", f"Coin listener initialized: {result['status']}")
-    # A restart drops the quiet-window timers, so settle any request whose coins are already quiet.
+    # A restart drops the quiet-window timers, so settle any request whose coins
+    # are already quiet. This runs on the boot thread and must not wait for GPIO.
     settle_quiet_coin_requests()
+
+    def note_attempt(attempt, result):
+        status = result.get("status")
+        detail = str(result.get("detail") or "").strip()
+        if status == "online":
+            write_log("hardware", f"Coin listener online on attempt {attempt}")
+            return
+        message = f"Coin listener attempt {attempt}: {status}"
+        if detail:
+            message += f" ({detail})"
+        # Warn on the first few and the last, so a dead backend does not bury
+        # the audit log in ten near-identical lines.
+        write_log("hardware", message, "warning" if attempt in {1, 3, 10} else "info")
+
+    def run_listener():
+        # Retries run on their own thread so a pin that is briefly unavailable
+        # at boot heals by itself instead of leaving the acceptor offline for
+        # the life of the process. The portal is already serving meanwhile.
+        hardware.supervise_coin_listener(start_coin_listener, note_attempt)
+
+    threading.Thread(target=run_listener, name="piso-coin-listener", daemon=True).start()
     if hardware.real_mode():
         threading.Thread(
             target=sync_active_speed_tiers_to_router,
