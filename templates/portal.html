@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='portal.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='portal-addons.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='coin-flow.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='coin-session.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='net-status.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='portal-experience.css') }}">
 </head>
@@ -98,6 +99,7 @@
         <div class="modal-actions"><button class="portal-button secondary" type="button" data-modal-close>Got it</button>{% if not pending_coin and not acceptor_busy %}<button class="portal-button" type="button" data-modal-close data-portal-scroll="coin-action">Insert coin</button>{% endif %}</div>
       </div>
     </div>
+    {% include "coin-session-modal.html" %}
   </main>
   {% if current %}<script>
     let remaining = {{ remaining_seconds }};
@@ -109,6 +111,7 @@
   <script src="{{ url_for('static', filename='sound.js') }}"></script>
   <script src="{{ url_for('static', filename='net-status.js') }}"></script>
   <script src="{{ url_for('static', filename='portal-experience.js') }}"></script>
+  <script src="{{ url_for('static', filename='coin-session.js') }}" defer></script>
 
   <script>
     (() => {

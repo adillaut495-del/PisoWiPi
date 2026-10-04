@@ -62,6 +62,7 @@ class HardwareConfig:
     coin_pull_up: bool = os.getenv("PISO_COIN_PULL_UP", "1") == "1"
     coin_active_low: bool = os.getenv("PISO_COIN_ACTIVE_LOW", "0") == "1"
     coin_debounce_ms: int = int(os.getenv("PISO_COIN_DEBOUNCE_MS", "80"))
+    coin_edge_debounce_ms: int = int(os.getenv("PISO_COIN_EDGE_DEBOUNCE_MS", "8"))
     coin_pulses: str = os.getenv("PISO_COIN_PULSES", '{"1": 1, "5": 5, "10": 10, "20": 20}')
     router_default_profile: str = os.getenv("PISO_ROUTER_PROFILE", "piso-package")
     router_rate_profiles: str = os.getenv("PISO_ROUTER_RATE_PROFILES", '{"2/1": "piso-package", "5/2": "piso-premium"}')
@@ -318,11 +319,20 @@ class CoinPulseListener:
         """True only once this process really holds the pin, so the console can trust it."""
         return self.device is not None
 
+    @property
+    def has_pending_pulses(self):
+        with self._lock:
+            return self._pulse_count > 0
+
     def start(self):
         if not self.available:
             return {"status": "simulated", "detail": "GPIO listener disabled"}
         try:
-            self.device = DigitalInputDevice(self.config.coin_gpio, pull_up=self.config.coin_pull_up)
+            self.device = DigitalInputDevice(
+                self.config.coin_gpio,
+                pull_up=self.config.coin_pull_up,
+                bounce_time=max(0, self.config.coin_edge_debounce_ms) / 1000,
+            )
         except Exception as error:
             # A dead coin pin must never take the portal down with it. The portal is the page
             # that takes the money, and a process that dies here leaves nobody able to even see

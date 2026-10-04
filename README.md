@@ -109,9 +109,9 @@ The current portal is the application layer of the captive-portal flow. In real 
 
 Copy `.env.example` to `.env` (hardware.py reads it on startup; real environment variables still win) or export the values in the service environment. Keep `PISO_HARDWARE_MODE=simulation` until the wiring and the router are verified, then set it to `real` on the Raspberry Pi only.
 
-**Start with `router/README.md`** — it walks the whole installation in order: wiring the acceptor through an optocoupler, preparing the router, importing `hap-ax-lite-piso.rsc`, running the Pi under systemd, and the checks that have to pass before a customer ever pays.
+**Start with `router/README.md`** — it walks the whole installation in order: wiring the acceptor through the documented 12 V relay module (or the PC817 fallback), preparing the router, importing `hap-ax-lite-piso.rsc`, running the Pi under systemd, and the checks that have to pass before a customer ever pays.
 
-For the Allan Universal Coinslot 1239A Promax, connect only the pulse output through an optocoupler — never a 12 V line straight into a GPIO pin — and measure the pulse count per denomination with `tools/coin_pulse_probe.py`, then set `PISO_COIN_PULSES`, `PISO_COIN_GPIO` and `PISO_COIN_ACTIVE_LOW`.
+For the Allan Universal Coinslot 1239A Promax, use relay contacts between the Pi GPIO and ground; only connect the selector's pulse line to the relay-module input if that input is rated for its 12 V open-collector signal. Never connect 12 V to a Pi pin. Measure pulse counts with `tools/coin_pulse_probe.py`, then set `PISO_COIN_PULSES`, `PISO_COIN_GPIO` and `PISO_COIN_ACTIVE_LOW`.
 
 For the MikroTik hAP ax lite, `hap-ax-lite-piso.rsc` enables RouterOS 7 `www-ssl`, creates the restricted API user and builds the HotSpot. The adapter uses `/system/resource`, `/ip/hotspot/active`, `/ip/hotspot/host`, `/ip/hotspot` and `/ip/hotspot/user`; run `python router/verify_router.py` on the Pi to prove all of them before flipping to real mode.
 

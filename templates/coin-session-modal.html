@@ -1,0 +1,22 @@
+<div class="coin-session-overlay" id="coin-session-modal" role="dialog" aria-modal="true" aria-labelledby="coin-session-title" aria-hidden="true" hidden data-start-url="{{ url_for('request_coin') }}" data-status-url="{{ url_for('portal_coin_request_api') }}" data-extend-url="{{ url_for('extend_coin_request') }}" data-cancel-url="{{ url_for('cancel_coin_request') }}" data-complete-url="{{ url_for('complete_client_coin_request') }}" data-client-timeout="{{ coin_request_timeout_minutes }}">
+  <section class="coin-session-card">
+    <div class="coin-session-heading">
+      <div><p class="eyebrow">COIN ACCEPTOR</p><h2 id="coin-session-title">Insert coins</h2></div>
+      <span class="coin-session-state" id="coin-session-state">READY</span>
+    </div>
+    <p class="coin-session-message" id="coin-session-message">Insert coins now. Your total and credit update as each coin registers.</p>
+    <div class="coin-session-total">
+      <div><span>Coins inserted</span><strong id="coin-session-count">0</strong></div>
+      <div><span>Total</span><strong id="coin-session-amount">P0</strong></div>
+      <div><span>Credit</span><strong><span id="coin-session-minutes">0</span> min</strong></div>
+    </div>
+    <p class="coin-session-reward" id="coin-session-reward">No coins inserted yet.</p>
+    <div class="coin-session-deadline"><span>Insertion time remaining</span><strong id="coin-session-countdown">--:--</strong></div>
+    <p class="coin-session-error" id="coin-session-error" role="status" aria-live="polite"></p>
+    <div class="coin-session-actions">
+      <button class="portal-button secondary" id="coin-session-cancel" type="button">Cancel request</button>
+      <button class="portal-button secondary" id="coin-session-extend" type="button">Need more time</button>
+      <button class="portal-button" id="coin-session-finish" type="button" disabled>Finish and credit coins</button>
+    </div>
+  </section>
+</div>

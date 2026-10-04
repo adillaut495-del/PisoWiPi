@@ -1,0 +1,112 @@
+.coin-input-panel {
+  min-width: 0;
+}
+
+.coin-input-note {
+  margin: 0 0 18px;
+  padding: 11px 13px;
+  border-left: 3px solid var(--orange);
+  background: #fff8ef;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.coin-input-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.coin-input-fields label,
+.coin-map-label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.coin-input-fields input[type="number"],
+.coin-input-fields input[readonly],
+#coin-pulse-map {
+  min-width: 0;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  background: #fbfdfa;
+  font: 0.85rem "DM Mono", monospace;
+}
+
+.coin-input-fields input[readonly] {
+  color: var(--muted);
+  background: var(--paper);
+}
+
+.coin-input-fields .coin-input-check {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 9px;
+}
+
+.coin-input-check input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--green);
+}
+
+.coin-map-label {
+  margin-top: 16px;
+}
+
+#coin-pulse-map {
+  margin-top: 7px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.coin-map-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.coin-map-hint code {
+  color: var(--ink);
+  font-family: "DM Mono", monospace;
+}
+
+.coin-input-footer {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 15px;
+}
+
+.coin-input-footer button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.coin-input-message {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.coin-input-message[data-error="true"] {
+  color: var(--red);
+}
+
+@media (max-width: 700px) {
+  .coin-input-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .coin-input-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
+from dataclasses import replace
 import hashlib
+import json
 import math
 import os
 from pathlib import Path
@@ -132,7 +134,8 @@ def initialize_database():
                 status TEXT NOT NULL DEFAULT 'pending',
                 created_at TEXT NOT NULL,
                 accepted_at TEXT,
-                last_coin_at TEXT
+                last_coin_at TEXT,
+                last_activity_at TEXT
             );
             """
         )
@@ -148,6 +151,13 @@ def initialize_database():
             connection.execute("ALTER TABLE coin_requests ADD COLUMN last_coin_at TEXT")
         except sqlite3.OperationalError:
             pass
+        try:
+            connection.execute("ALTER TABLE coin_requests ADD COLUMN last_activity_at TEXT")
+        except sqlite3.OperationalError:
+            pass
+        connection.execute(
+            "UPDATE coin_requests SET last_activity_at = COALESCE(last_activity_at, last_coin_at, created_at) WHERE last_activity_at IS NULL"
+        )
         try:
             connection.execute("ALTER TABLE sessions ADD COLUMN source TEXT")
         except sqlite3.OperationalError:
@@ -190,6 +200,20 @@ def initialize_database():
         connection.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('coin_auto_settle_seconds', '5')"
         )
+        coin_config = hardware.HardwareConfig()
+        coin_input_defaults = {
+            "coin_gpio": str(coin_config.coin_gpio),
+            "coin_pull_up": "1" if coin_config.coin_pull_up else "0",
+            "coin_active_low": "1" if coin_config.coin_active_low else "0",
+            "coin_edge_debounce_ms": str(coin_config.coin_edge_debounce_ms),
+            "coin_debounce_ms": str(coin_config.coin_debounce_ms),
+            "coin_pulses": coin_config.coin_pulses,
+        }
+        for key, value in coin_input_defaults.items():
+            connection.execute(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+                (key, value),
+            )
         tier_count = connection.execute("SELECT COUNT(*) AS total FROM speed_tiers").fetchone()["total"]
         if tier_count == 0:
             profiles = hardware.router_adapter.config.rate_profile_map()
@@ -229,6 +253,77 @@ def setting(key, default=""):
     with get_db() as connection:
         row = connection.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
     return row["value"] if row else default
+
+
+def coin_input_settings():
+    config = hardware.HardwareConfig()
+    try:
+        pulse_map = json.loads(setting("coin_pulses", config.coin_pulses))
+        if not isinstance(pulse_map, dict):
+            raise ValueError("pulse map must be an object")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pulse_map = json.loads(config.coin_pulses)
+    return {
+        "gpio": int(setting("coin_gpio", str(config.coin_gpio))),
+        "pull_up": setting("coin_pull_up", "1" if config.coin_pull_up else "0") == "1",
+        "active_low": setting("coin_active_low", "1" if config.coin_active_low else "0") == "1",
+        "edge_debounce_ms": int(setting("coin_edge_debounce_ms", str(config.coin_edge_debounce_ms))),
+        "burst_quiet_ms": int(setting("coin_debounce_ms", str(config.coin_debounce_ms))),
+        "pulse_map": pulse_map,
+    }
+
+
+def configured_coin_input():
+    config = hardware.HardwareConfig()
+    values = coin_input_settings()
+    return replace(
+        config,
+        coin_gpio=values["gpio"],
+        coin_pull_up=values["pull_up"],
+        coin_active_low=values["active_low"],
+        coin_edge_debounce_ms=values["edge_debounce_ms"],
+        coin_debounce_ms=values["burst_quiet_ms"],
+        coin_pulses=json.dumps(values["pulse_map"]),
+    )
+
+
+def validate_coin_input_settings(payload):
+    if not isinstance(payload, dict):
+        return None, "Coin input settings must be an object."
+    try:
+        gpio = int(payload.get("gpio", hardware.HardwareConfig().coin_gpio))
+        edge_ms = int(payload["edge_debounce_ms"])
+        burst_ms = int(payload["burst_quiet_ms"])
+        pulse_map = payload["pulse_map"]
+        if isinstance(pulse_map, str):
+            pulse_map = json.loads(pulse_map)
+        if not isinstance(pulse_map, dict) or not pulse_map:
+            raise ValueError
+        normalized = {}
+        for pulses, amount in pulse_map.items():
+            pulse_count = int(pulses)
+            coin_amount = int(amount)
+            if pulse_count < 1 or pulse_count > 100 or coin_amount not in COIN_DENOMINATIONS:
+                raise ValueError
+            normalized[str(pulse_count)] = coin_amount
+        if len(normalized) != len(pulse_map):
+            raise ValueError
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None, "Enter a valid pulse map, edge debounce, and burst quiet-time."
+    if gpio < 0 or gpio > 27:
+        return None, "GPIO must be a BCM pin from 0 to 27."
+    if edge_ms < 0 or edge_ms > 50:
+        return None, "Edge debounce must be between 0 and 50 ms."
+    if burst_ms < 20 or burst_ms > 1000:
+        return None, "Burst quiet-time must be between 20 and 1000 ms."
+    return {
+        "gpio": gpio,
+        "pull_up": bool(payload.get("pull_up")),
+        "active_low": bool(payload.get("active_low")),
+        "edge_debounce_ms": edge_ms,
+        "burst_quiet_ms": burst_ms,
+        "pulse_map": normalized,
+    }, None
 
 
 COIN_DENOMINATIONS = (1, 5, 10, 20)
@@ -330,7 +425,8 @@ def expire_stale_coin_requests():
     cutoff = (datetime.now() - timedelta(seconds=coin_request_timeout_seconds())).isoformat(timespec="seconds")
     with get_db() as connection:
         stale = connection.execute(
-            "SELECT id, coin_count FROM coin_requests WHERE status = 'pending' AND created_at < ?", (cutoff,)
+            "SELECT id, coin_count FROM coin_requests WHERE status = 'pending' AND COALESCE(last_activity_at, last_coin_at, created_at) < ?",
+            (cutoff,),
         ).fetchall()
     expired = []
     for row in stale:
@@ -363,6 +459,12 @@ def pending_coin_request(device_id=None):
 def coin_request_payload(row):
     """Serialise a request. Minutes always describe the best payout for the running total."""
     reward = best_coin_allocation(row["amount"])
+    activity_text = row["last_activity_at"] or row["last_coin_at"] or row["created_at"]
+    activity_at = datetime.fromisoformat(activity_text)
+    seconds_remaining = max(
+        0,
+        coin_request_timeout_seconds() - int((datetime.now() - activity_at).total_seconds()),
+    )
     return {
         "id": row["id"],
         "device_id": row["device_id"],
@@ -371,6 +473,7 @@ def coin_request_payload(row):
         "coin_count": row["coin_count"],
         "created_at": row["created_at"],
         "last_coin_at": row["last_coin_at"],
+        "seconds_remaining": seconds_remaining,
         "reward": reward,
     }
 
@@ -1101,15 +1204,25 @@ def request_coin():
     existing = pending_coin_request()
     if existing is not None:
         if existing["device_id"] == device_id:
-            # The same client pressed Insert coin again; keep using the open request.
+            if request.is_json:
+                return jsonify({**coin_request_payload(existing), "status": "pending"})
             return redirect(url_for("portal"))
+        if request.is_json:
+            return jsonify({"error": "Another client is currently inserting coins. Please wait."}), 409
         return redirect(url_for("portal", error="Another client is currently inserting coins. Please wait."))
+    created_at = now_text()
     with get_db() as connection:
         connection.execute(
-            "INSERT INTO coin_requests (device_id, ip_address, plan_id, amount, minutes, coin_count, created_at) VALUES (?, ?, 0, 0, 0, 0, ?)",
-            (device_id, request.remote_addr, now_text()),
+            "INSERT INTO coin_requests (device_id, ip_address, plan_id, amount, minutes, coin_count, created_at, last_activity_at) VALUES (?, ?, 0, 0, 0, 0, ?, ?)",
+            (device_id, request.remote_addr, created_at, created_at),
         )
+        opened = connection.execute(
+            "SELECT * FROM coin_requests WHERE device_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1",
+            (device_id,),
+        ).fetchone()
     write_log("coin", f"Client opened coin insertion request for {device_id}")
+    if request.is_json:
+        return jsonify({**coin_request_payload(opened), "status": "pending"}), 201
     return redirect(url_for("portal"))
 
 
@@ -1118,18 +1231,51 @@ def cancel_coin_request():
     device_id = portal_device_id()
     pending = pending_coin_request(device_id)
     if pending is not None and pending["coin_count"] >= 1:
-        # Coins are already in the box: a cancel settles them onto this device instead of voiding them.
-        complete_coin_request(pending["id"], source="coin-cancel-settled")
+        if request.is_json:
+            return jsonify({"error": "Coins have already been inserted. Finish the request to receive your credit."}), 409
         return redirect(url_for("portal"))
-    if pending is not None:
-        cancel_auto_settle(pending["id"])
+    if pending is None:
+        if request.is_json:
+            return jsonify({"error": "There is no open coin request."}), 404
+        return redirect(url_for("portal"))
+    cancel_auto_settle(pending["id"])
+    with get_db() as connection:
+        connection.execute("UPDATE coin_requests SET status = 'cancelled' WHERE id = ? AND status = 'pending'", (pending["id"],))
+    write_log("coin", f"Client cancelled coin insertion request for {device_id}")
+    if request.is_json:
+        return jsonify({"status": "cancelled"})
+    return redirect(url_for("portal"))
+
+
+@app.post("/portal/request-coin/extend")
+def extend_coin_request():
+    device_id = portal_device_id()
+    pending = pending_coin_request(device_id)
+    if pending is None:
+        return jsonify({"error": "There is no open coin request to extend."}), 404
+    activity_at = now_text()
     with get_db() as connection:
         connection.execute(
-            "UPDATE coin_requests SET status = 'cancelled' WHERE device_id = ? AND status = 'pending'",
-            (device_id,),
+            "UPDATE coin_requests SET last_activity_at = ? WHERE id = ? AND status = 'pending'",
+            (activity_at, pending["id"]),
         )
-    write_log("coin", f"Client cancelled coin insertion request for {device_id}")
-    return redirect(url_for("portal"))
+        refreshed = connection.execute("SELECT * FROM coin_requests WHERE id = ?", (pending["id"],)).fetchone()
+    write_log("coin", f"Client extended coin insertion request {pending['id']} for {device_id}")
+    return jsonify({**coin_request_payload(refreshed), "status": "pending"})
+
+
+@app.post("/portal/request-coin/complete")
+def complete_client_coin_request():
+    device_id = portal_device_id()
+    pending = pending_coin_request(device_id)
+    if pending is None:
+        return jsonify({"error": "There is no open coin request."}), 404
+    if pending["coin_count"] < 1:
+        return jsonify({"error": "Insert at least one coin before finishing."}), 409
+    settled = complete_coin_request(pending["id"], source="client-coin-finish")
+    if settled is None:
+        return jsonify({"error": "This coin request has already closed."}), 409
+    return jsonify({"status": "accepted", "session_active": portal_session() is not None})
 
 
 def time_capped_plan_rewards():
@@ -1221,14 +1367,16 @@ def accumulate_coin(request_id, amount):
     while the operator clicks, or two pulses in flight) both count instead of overwriting each other.
     Returns the updated row, or None when the request is no longer open.
     """
+    activity_at = now_text()
     with get_db() as connection:
         connection.execute(
             """
             UPDATE coin_requests
-            SET amount = amount + ?, coin_count = coin_count + 1, last_coin_at = ?
+            SET amount = amount + ?, coin_count = coin_count + 1,
+                last_coin_at = ?, last_activity_at = ?
             WHERE id = ? AND status = 'pending'
             """,
-            (amount, now_text(), request_id),
+            (amount, activity_at, activity_at, request_id),
         )
         row = connection.execute("SELECT * FROM coin_requests WHERE id = ?", (request_id,)).fetchone()
         if row is None or row["status"] != "pending":
@@ -1884,6 +2032,48 @@ def hardware_status_api():
     return jsonify(hardware_status())
 
 
+@app.get("/api/admin/coin-input-settings")
+@admin_api_required
+def coin_input_settings_api():
+    return jsonify({**coin_input_settings(), "listener_status": hardware.coin_listener_state()})
+
+
+@app.post("/api/admin/coin-input-settings")
+@admin_api_required
+def update_coin_input_settings_api():
+    values, error = validate_coin_input_settings(request.get_json(silent=True))
+    if error:
+        return jsonify({"error": error}), 400
+    listener = hardware.coin_listener
+    if listener is not None and listener.has_pending_pulses:
+        return jsonify({"error": "A coin pulse burst is in progress. Wait for it to finish, then save again."}), 409
+
+    updates = {
+        "coin_gpio": str(values["gpio"]),
+        "coin_pull_up": "1" if values["pull_up"] else "0",
+        "coin_active_low": "1" if values["active_low"] else "0",
+        "coin_edge_debounce_ms": str(values["edge_debounce_ms"]),
+        "coin_debounce_ms": str(values["burst_quiet_ms"]),
+        "coin_pulses": json.dumps(values["pulse_map"], separators=(",", ":")),
+    }
+    with get_db() as connection:
+        for key, value in updates.items():
+            connection.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+    listener_state = {"status": "simulated", "detail": "Settings saved; live GPIO applies in real mode."}
+    if hardware.real_mode():
+        if listener is not None:
+            listener.stop()
+        hardware.coin_listener = CoinPulseListener(record_hardware_coin, configured_coin_input())
+        listener_state = hardware.coin_listener.start()
+    write_log(
+        "hardware",
+        f"Admin updated coin input settings; GPIO{values['gpio']} listener {listener_state['status']}",
+        "warning" if listener_state["status"] == "offline" else "info",
+    )
+    return jsonify({"settings": coin_input_settings(), "listener": listener_state})
+
+
 @app.get("/api/admin/voucher-speed-tiers")
 @admin_api_required
 def voucher_speed_tiers_api():
@@ -2042,7 +2232,7 @@ def internet_status_api():
 
 
 def record_hardware_coin(amount, pulses):
-    """GPIO coin: it joins the client's open request, then the quiet window settles the whole total.
+    """GPIO coin: add the denomination to the client's open request.
 
     The acceptor cannot tell who paid, so a coin is credited to whoever holds the open request (the
     client pressed Insert coin first). With nobody waiting the coin is still booked, but it grants no
@@ -2071,14 +2261,10 @@ def record_hardware_coin(amount, pulses):
         )
         return None
     payout = best_coin_allocation(updated["amount"])
-    if arm_auto_settle(updated["id"]):
-        closing = f"; settles {auto_settle_seconds()}s after the last coin"
-    else:
-        closing = "; waiting for the operator to finish"
     write_log(
         "coin",
         f"P{amount:.0f} coin from {pulses} pulses joined request {updated['id']} ({updated['device_id']}): "
-        f"total P{float(updated['amount']):.0f} now buys {payout['summary']} ({payout['minutes']} minutes){closing}",
+        f"total P{float(updated['amount']):.0f} now buys {payout['summary']} ({payout['minutes']} minutes); waiting for client finish",
     )
     return updated
 
@@ -2115,7 +2301,7 @@ def sync_active_speed_tiers_to_router():
 
 
 def start_hardware():
-    hardware.coin_listener = CoinPulseListener(record_hardware_coin)
+    hardware.coin_listener = CoinPulseListener(record_hardware_coin, configured_coin_input())
     result = hardware.coin_listener.start()
     write_log("hardware", f"Coin listener initialized: {result['status']}")
     # A restart drops the quiet-window timers, so settle any request whose coins are already quiet.

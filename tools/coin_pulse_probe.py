@@ -72,6 +72,12 @@ def parse_args(argv=None):
         help="quiet time that closes a burst; defaults to the pulse tolerance in the app settings",
     )
     parser.add_argument(
+        "--bounce-ms",
+        type=int,
+        default=8,
+        help="ignore GPIO edge bounce for this many milliseconds (default: 8)",
+    )
+    parser.add_argument(
         "--timeout",
         type=float,
         default=0,
@@ -94,10 +100,11 @@ def main(argv=None) -> int:
         return 1
 
     gap_ms = args.gap_ms if args.gap_ms is not None else 100
-    print(f"Listening on GPIO{args.gpio} (pull_up={args.pull_up}, active_low={args.active_low}, gap={gap_ms} ms)")
+    bounce_ms = max(0, args.bounce_ms)
+    print(f"Listening on GPIO{args.gpio} (pull_up={args.pull_up}, active_low={args.active_low}, gap={gap_ms} ms, bounce={bounce_ms} ms)")
     print("Drop one coin of each denomination. Press Ctrl+C when the map is complete.\n")
 
-    device = DigitalInputDevice(args.gpio, pull_up=args.pull_up)
+    device = DigitalInputDevice(args.gpio, pull_up=args.pull_up, bounce_time=bounce_ms / 1000)
     counters = {"pulses": 0, "last": time.monotonic()}
     release = {"last_log": time.monotonic()}
     started = time.monotonic()

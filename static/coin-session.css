@@ -1,0 +1,142 @@
+.coin-session-overlay[hidden] {
+  display: none;
+}
+
+.coin-waiting {
+  display: none !important;
+}
+
+.coin-waiting {
+  display: none !important;
+}
+
+.coin-session-overlay {
+  position: fixed;
+  z-index: 55;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(15, 27, 31, 0.66);
+  backdrop-filter: blur(4px);
+}
+
+.coin-session-card {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
+  padding: 24px;
+  background: var(--panel);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.24);
+}
+
+.coin-session-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.coin-session-heading h2 {
+  margin: 0;
+  font-size: 1.35rem;
+}
+
+.coin-session-state {
+  padding: 5px 7px;
+  background: var(--mint);
+  color: var(--green);
+  font: 10px "DM Mono", monospace;
+}
+
+.coin-session-message {
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.coin-session-total {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 18px 0 10px;
+}
+
+.coin-session-total > div {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  background: var(--paper);
+}
+
+.coin-session-total span,
+.coin-session-deadline span {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.coin-session-total strong {
+  font: 600 1.15rem "DM Mono", monospace;
+}
+
+.coin-session-reward {
+  min-height: 1.3em;
+  margin: 10px 0 18px;
+  color: var(--green);
+  font-size: 0.8rem;
+}
+
+.coin-session-deadline {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.coin-session-deadline strong {
+  color: var(--ink);
+  font: 600 1rem "DM Mono", monospace;
+}
+
+.coin-session-error {
+  min-height: 1.25em;
+  color: var(--red);
+  font-size: 0.8rem;
+}
+
+.coin-session-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.coin-session-actions #coin-session-finish {
+  grid-column: 1 / -1;
+}
+
+.coin-session-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+body.coin-session-open {
+  overflow: hidden;
+}
+
+@media (max-width: 520px) {
+  .coin-session-card {
+    padding: 19px;
+  }
+
+  .coin-session-total > div {
+    padding: 9px;
+  }
+
+  .coin-session-total strong {
+    font-size: 0.95rem;
+  }
+}

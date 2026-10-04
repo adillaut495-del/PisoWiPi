@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='vouchers.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='voucher-tiers.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='speed-tiers.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='coin-input-settings.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='modals.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='coin-flow.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='net-status.css') }}">
@@ -26,9 +27,10 @@
         <a class="nav-link" href="#vouchers">Vouchers <span>03</span></a>
         <a class="nav-link" href="#clients">Clients <span>04</span></a>
         <a class="nav-link" href="#hardware">Hardware <span>05</span></a>
-        <a class="nav-link" href="#settings">Network &amp; security <span>06</span></a>
-        <a class="nav-link" href="#speed-tiers">Speed tiers <span>07</span></a>
-        <a class="nav-link" href="#logs">Logs <span>08</span></a>
+        <a class="nav-link" href="#coin-input">Coin input <span>06</span></a>
+        <a class="nav-link" href="#settings">Network &amp; security <span>07</span></a>
+        <a class="nav-link" href="#speed-tiers">Speed tiers <span>08</span></a>
+        <a class="nav-link" href="#logs">Logs <span>09</span></a>
       </nav>
       <div class="sidebar-foot"><span class="online-dot"></span> Controller online<a href="{{ url_for('logout') }}">Sign out</a></div>
     </aside>
@@ -157,6 +159,7 @@
       <div class="coin-queue-panel" data-page="clients" id="coin-queue" data-coin-requests-api="{{ url_for('admin_coin_requests_api') }}" data-poll-seconds="2" data-auto-settle-seconds="{{ auto_settle_seconds }}"><div class="panel-heading"><div><p class="eyebrow">COIN ACCEPTOR SIMULATOR</p><h2>Pending client coin requests</h2><p class="muted">Only one client can hold the coin acceptor at a time. The simulator pops up by itself when a client presses Insert coin, then insert each physical coin and finish &mdash; the client is credited from the whole amount at the coin rates the plan rows set. Real acceptor coins land on the same request{% if auto_settle_seconds %}, and the total settles itself {{ auto_settle_seconds }} seconds after the last coin, so no click is needed{% else %}; press Finish to settle the total{% endif %}.</p></div><span class="panel-note"><span class="live-chip">LIVE</span> <span data-queue-count>0</span> waiting</span></div><div class="coin-request-list" id="coin-request-list" hidden></div><div class="empty-state" id="coin-request-empty">No client coin requests are waiting. Keep this console open &mdash; the simulator opens automatically.</div></div>
       <div class="admin-modal" id="coin-simulator" aria-hidden="true"><div class="modal-card coin-simulator-modal"><div class="modal-heading"><div><p class="eyebrow">ALLAN COINSLOT 1239 / SIMULATOR</p><h3>Insert coins for <span data-sim-device>the client</span></h3></div><button class="modal-close" type="button" data-modal-close>Close</button></div><div class="coin-sim-total"><span>Client credit</span><strong>P<span data-sim-amount>0</span> / <span data-sim-minutes>0</span> min</strong><small><span data-sim-count>0</span> coins accepted</small><em class="coin-sim-reward" data-sim-reward>No coins inserted yet.</em></div><div class="coin-denominations" data-coin-denominations></div><p class="coin-sim-status" data-sim-status>Waiting for the first coin&hellip;</p><button class="button complete-coin-button" type="button" data-complete-coin>Finish / accept coins</button></div></div>
       {% include "speed-tiers.html" %}
+      {% include "coin-input-settings.html" %}
     </main>
   </div>
   <script>
@@ -164,7 +167,7 @@
       const links = [...document.querySelectorAll('.nav-link[href^="#"]')];
       const sections = [...document.querySelectorAll('main > section')];
       const coinQueue = document.querySelector('.coin-queue-panel');
-      const groups = { overview: [0, 1, 8], pricing: [2], vouchers: [3], clients: [4], hardware: [1], settings: [5, 6], 'speed-tiers': [9], logs: [7] };
+      const groups = { overview: [0, 1, 8], pricing: [2], vouchers: [3], clients: [4], hardware: [1], 'coin-input': [10], settings: [5, 6], 'speed-tiers': [9], logs: [7] };
       const showView = (view) => {
         const selected = groups[view] ? view : 'overview';
         sections.forEach((section, index) => { section.style.display = groups[selected].includes(index) ? '' : 'none'; });
@@ -242,6 +245,9 @@
         bindLaunchers(root);
       };
       window.PisoAdminForms = { wrap: wrapForms, open: openModal };
+      document.querySelector('.simulation-panel')?.remove();
+      document.getElementById('coin-queue')?.remove();
+      document.getElementById('coin-simulator')?.remove();
       wrapForms(document.querySelector('main'));
       document.addEventListener('click', (event) => { const close = event.target.closest('[data-modal-close]'); if (close) closeModal(close.closest('.admin-modal')); if (event.target.classList.contains('admin-modal')) closeModal(event.target); });
       document.addEventListener('keydown', (event) => { if (event.key === 'Escape') document.querySelectorAll('.admin-modal.is-open').forEach(closeModal); });
@@ -251,6 +257,7 @@
   <script src="{{ url_for('static', filename='net-status.js') }}"></script>
   <script src="{{ url_for('static', filename='voucher-tiers.js') }}" defer></script>
   <script src="{{ url_for('static', filename='speed-tiers.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='coin-input-settings.js') }}" defer></script>
   <script>
     window.PISO_COIN_QUEUE = {{ coin_requests|tojson }};
     window.PISO_COIN_OPTIONS = {{ coin_options|tojson }};

@@ -28,7 +28,7 @@ and the Allan coin acceptor that takes the money.
    192.168.88.2           192.168.90.x
    app.py :5000  (console + /portal)
         |
-   GPIO17  <-- pulse line (optocoupler) <-- Allan 1239A coin slot  <-- 12 V PSU
+  GPIO17  <-- isolated relay contacts <-- relay module <-- Allan 1239A <-- 12 V PSU
 ```
 
 Who does what:
@@ -51,34 +51,59 @@ set to **FAST** and **NO** for controller use.
 | Allan pin | Connects to |
 | --- | --- |
 | `DC12V` | +12 V of the 12 V PSU (usually the red wire) |
-| `GND` | 0 V of the same PSU (black wire) and the Pi's ground |
-| `COIN` | pulse output → Pi GPIO17 through the optocoupler (see below) |
+| `GND` | 0 V of the 12 V PSU (black wire); also relay-module control GND if its input is compatible |
+| `COIN` | pulse output → relay-module `IN` only if its input is rated for the acceptor's 12 V open-collector, active-low signal |
 | `COUNTER` | machine payout counter → leave unconnected |
 
-### Never wire the pulse line straight into a GPIO pin
+### Relay-module wiring to GPIO17
 
-The pulse line sits in the 12 V domain, and a Pi GPIO is a 3.3 V input. Isolate
-it with an optocoupler (PC817 or 4N35) — the acceptor's output transistor then
-switches the opto's LED instead of your GPIO pin:
+The pictured relay has a 12 V coil. That does **not** prove its `IN` pin accepts
+12 V. Check the module's input rating and trigger polarity first. Connect the
+acceptor signal to `IN` only if the module documentation explicitly supports a
+12 V open-collector, active-low input. Otherwise keep the PC817/4N35 circuit
+below, or use a relay module with a documented compatible input.
+
+```
+12 V PSU +12V ───────── Allan DC12V
+       └─────────────── relay module VCC
+12 V PSU 0V ─────────── Allan GND
+       └─────────────── relay module GND
+Allan COIN ──────────── relay module IN  (only if its input rating/polarity match)
+
+relay contact COM ───── Pi GPIO17 / physical pin 11
+relay contact NO  ───── Pi GND / physical pin 9
+relay contact NC  ───── not connected
+```
+
+Use the `COM` and `NO` labels printed on the module; terminal screw order varies.
+The relay contact is a dry switch: when the relay energizes, it connects GPIO17 to
+Pi ground. The Pi's internal pull-up keeps the pin high otherwise, so the input is
+active-low (`PISO_COIN_PULL_UP=1`, `PISO_COIN_ACTIVE_LOW=1`). **Never connect the
+module's `VCC`, `IN`, or 12 V ground to a Pi GPIO or 3.3 V pin.** Keep the Pi on
+its own supply; only the relay's isolated `COM`/`NO` contacts touch Pi GPIO/GND.
+
+Before attaching GPIO17, power only the relay/acceptor side and verify with a
+multimeter that `COM`–`NO` is open at idle and closes briefly for each coin pulse.
+Then connect the Pi and run `../tools/coin_pulse_probe.py`. The app and probe
+ignore edges closer together than `PISO_COIN_EDGE_DEBOUNCE_MS` (8 ms by default)
+to suppress brief contact bounce. Mechanical relay pickup/release delay can still
+miss or multiply fast coin pulses. If counts remain unstable, tune the edge filter
+in small increments and compare the raw pulse timing; if real pulses get merged,
+use the PC817/4N35 circuit instead. Do not compensate by changing the payout map
+until each denomination produces a stable pulse count.
+
+The PC817/4N35 alternative, when the relay module input rating is unknown:
 
 ```
 12 V PSU +12V ──[ 1 kΩ ]── PC817 pin 1 (anode)
                            PC817 pin 2 (cathode) ── Allan COIN pin
 12 V PSU GND  ─────────────────────────────────── (same ground as the acceptor)
-
 PC817 pin 4 (collector) ── Pi GPIO17 / pin 11   (internal pull-up on)
 PC817 pin 3 (emitter)   ── Pi GND / pin 9
 ```
 
-* With this wiring the acceptor pulls `COIN` to ground on each pulse, the opto
-  transistor conducts, and GPIO17 falls to 0 V — so the pin is **active low**
-  (`PISO_COIN_ACTIVE_LOW=1`, which is also what `tools/coin_pulse_probe.py`
-  assumes by default). A 10 kΩ pull-up to 3.3 V is a good backup if you do not
-  want to rely on the Pi's internal one.
-* Power the Pi from its own supply and share only ground through the opto path.
-  Never feed 12 V into the Pi's 5 V input.
-* Sanity check with a multimeter before connecting the Pi: with the acceptor
-  idle, `COIN` sits near 12 V, and it pulses toward 0 V when a coin passes.
+With the optocoupler, the acceptor pulls `COIN` to ground and the isolated
+transistor pulls GPIO17 low. Never feed 12 V into the Pi's 5 V, 3.3 V, or GPIO pins.
 * Every coil acceptor fires a burst of pulses per coin. The 1239A is
   programmable, and the usual piso setting is one pulse per peso (`P1=1`,
   `P5=5`, `P10=10`, `20` for a P20 program). Measure yours with
@@ -254,7 +279,9 @@ PISO_ROUTER_RATE_PROFILES={"2/1":"piso-package","5/2":"piso-premium"}
 
 PISO_COIN_GPIO=17
 PISO_COIN_PULL_UP=1
-PISO_COIN_ACTIVE_LOW=1               # matches the optocoupler wiring above
+PISO_COIN_ACTIVE_LOW=1               # matches relay COM-to-GPIO, NO-to-Pi-GND wiring
+# Filter short relay contact bounce per edge.
+PISO_COIN_EDGE_DEBOUNCE_MS=8
 PISO_COIN_DEBOUNCE_MS=100
 PISO_COIN_PULSES={"1":1,"5":5,"10":10,"20":20}
 ```

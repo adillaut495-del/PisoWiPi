@@ -1,0 +1,25 @@
+<section class="panel coin-input-panel" id="coin-input" data-settings-api="{{ url_for('coin_input_settings_api') }}">
+  <div class="panel-heading">
+    <div>
+      <p class="eyebrow">HARDWARE / CALIBRATION</p>
+      <h2>Coin input</h2>
+      <p class="muted">Tune GPIO17 edge filtering and map measured pulses to coin values.</p>
+    </div>
+    <span class="panel-note" id="coin-input-state">LOADING</span>
+  </div>
+  <p class="coin-input-note">GPIO17 is BCM pin 17 (physical pin 11). The input is isolated by the relay contacts; never apply 5V or 12V to a Pi GPIO. Measure pulse counts before changing the map.</p>
+  <div class="coin-input-fields">
+    <label>GPIO input<input id="coin-gpio" type="text" value="GPIO17 / BCM 17" readonly></label>
+    <label>Edge debounce (ms)<input id="coin-edge-debounce" type="number" min="0" max="50" step="1" required></label>
+    <label>Burst quiet-time (ms)<input id="coin-burst-quiet" type="number" min="20" max="1000" step="1" required></label>
+    <label class="coin-input-check"><input id="coin-pull-up" type="checkbox"> Internal pull-up enabled</label>
+    <label class="coin-input-check"><input id="coin-active-low" type="checkbox"> Active-low pulses</label>
+  </div>
+  <label class="coin-map-label" for="coin-pulse-map">Pulse count to peso map (JSON)</label>
+  <textarea id="coin-pulse-map" rows="4" spellcheck="false" required></textarea>
+  <p class="coin-map-hint">Example: <code>{"1":1,"2":5,"3":10,"4":20}</code> means 1 pulse = P1, 2 pulses = P5, 3 = P10, 4 = P20. Use your probe's measured counts.</p>
+  <div class="coin-input-footer">
+    <button class="button" id="coin-input-save" type="button" disabled>Save and apply</button>
+    <span class="coin-input-message" id="coin-input-message" role="status" aria-live="polite"></span>
+  </div>
+</section>
