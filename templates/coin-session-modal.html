@@ -11,7 +11,10 @@
       <div><span>Credit</span><strong><span id="coin-session-minutes">0</span> min</strong></div>
     </div>
     <p class="coin-session-reward" id="coin-session-reward">No coins inserted yet.</p>
-    <div class="coin-session-deadline"><span>Insertion time remaining</span><strong id="coin-session-countdown">--:--</strong></div>
+    {# Named for what it is: the inactivity backstop, not the auto-settle quiet
+       window. These are separate timers and conflating them is what made this
+       look stuck at 10 minutes. #}
+    <div class="coin-session-deadline"><span>Time left before this request closes</span><strong id="coin-session-countdown">--:--</strong></div>
     <p class="coin-session-error" id="coin-session-error" role="status" aria-live="polite"></p>
     <div class="coin-session-actions">
       <button class="portal-button secondary" id="coin-session-cancel" type="button">Cancel request</button>

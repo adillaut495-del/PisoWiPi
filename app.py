@@ -399,12 +399,24 @@ SESSION_STATUS_LABELS = {
 EXTEND_CHOICES = (5, 30, 60)
 
 
-def coin_request_timeout_seconds():
+def coin_request_timeout_minutes():
+    """Minutes an idle coin request is held open before it is released.
+
+    This is the inactivity countdown the client sees, and it is deliberately a
+    *different* setting from ``coin_auto_settle_seconds``: auto-settle is the
+    short quiet window after a coin that settles the total automatically, while
+    this is the long backstop that stops an abandoned request from holding the
+    single coin acceptor forever. Changing auto-settle does not move this.
+    """
     try:
         minutes = int(setting("coin_request_timeout_minutes", "10"))
     except (TypeError, ValueError):
         minutes = 10
-    return max(1, minutes) * 60
+    return min(max(minutes, 1), 1440)
+
+
+def coin_request_timeout_seconds():
+    return coin_request_timeout_minutes() * 60
 
 
 def auto_settle_seconds():
@@ -950,6 +962,10 @@ def portal():
         coin_options=options,
         p1_rate=next((option for option in options if option["amount"] == 1), None),
         auto_settle_seconds=auto_settle_seconds(),
+        # The modal reads this for its inactivity countdown. It was never passed,
+        # so data-client-timeout rendered empty and the client silently fell back
+        # to its own hard-coded default instead of the operator's setting.
+        coin_request_timeout_minutes=coin_request_timeout_minutes(),
     )
 
 
@@ -1685,6 +1701,7 @@ def dashboard():
         mac_voucher_mode=setting("mac_voucher_mode", "0"),
         pulse_tolerance=setting("coin_pulse_tolerance_ms", "80"),
         auto_settle_seconds=auto_settle_seconds(),
+        coin_request_timeout_minutes=coin_request_timeout_minutes(),
     )
 
 
@@ -1927,6 +1944,13 @@ def admin_sessions_api():
 @admin_required
 def update_system_settings():
     auto_settle = request.form.get("auto_settle", type=int)
+    # The inactivity backstop the client counts down. Kept separate from
+    # auto_settle on purpose: one settles the total, the other releases an
+    # abandoned request. Absent from the form (older cached page) means "keep
+    # whatever is stored" rather than silently resetting it to the default.
+    request_timeout = request.form.get("request_timeout", type=int)
+    if request_timeout is not None:
+        request_timeout = min(max(request_timeout, 1), 1440)
     updates = {
         "ssid": request.form.get("ssid", "PisoPilot WiFi").strip()[:64],
         "session_mode": request.form.get("session_mode", "time"),
@@ -1935,6 +1959,8 @@ def update_system_settings():
         # 0 keeps the operator pressing Finish; any other value is the quiet window that self-settles a coin total.
         "coin_auto_settle_seconds": str(min(max(5 if auto_settle is None else auto_settle, 0), 300)),
     }
+    if request_timeout is not None:
+        updates["coin_request_timeout_minutes"] = str(request_timeout)
     with get_db() as connection:
         for key, value in updates.items():
             connection.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
