@@ -526,23 +526,41 @@
 /ip/service set telnet disabled=yes
 /ip/service set ftp disabled=yes
  
+# Declared OUTSIDE the :do so the on-error handler can quote it in its message:
+# a :local declared inside the block is not in scope there.
+:local scratchLogin "hotspot/piso-login.tmp"
 :do {
-/tool fetch url=("http://" . $portalIp . ":" . $portalPort . "/hotspot/login.html") dst-path="hotspot/login.html"
+# hotspot/login.html is a RESERVED name: the HotSpot owns it and RouterOS
+# refuses to let /tool fetch overwrite it directly ("could not fetch
+# login.html"), even though the very next fetch to hotspot/api.json in the
+# same run succeeds. So download to a scratch name the router does allow,
+# then rename it into place. The rename is what actually installs it.
+/tool fetch url=("http://" . $portalIp . ":" . $portalPort . "/hotspot/login.html") dst-path=$scratchLogin
+:local scratchFile [/file find where name=$scratchLogin]
+:if ([:len $scratchFile] = 0) do={
+:log warning ("PisoPilot: could not download login.html to " . $scratchLogin . " - is app.py running and is " . $portalPort . " reachable from the router?")
+} else={
+:local scratchSize [/file get [:pick $scratchFile 0] size]
+:if ($scratchSize < 500) do={
+:log warning ("PisoPilot: the login page only came down as " . $scratchSize . " bytes - it did not really download. Start app.py and re-run.")
+} else={
+/file remove [find where name="hotspot/login.html"]
+# RouterOS has no "move" sub-command under /file: the menu is add, copy, edit,
+# enable, get, import, list, load, make-directory, print, remove, rename, set,
+# sign, unpack and upload. Typing it answers "bad command name". A file is moved
+# by setting its name to the new path, which is what the next line does.
+:local scratchId [:pick $scratchFile 0]
+/file set $scratchId name="hotspot/login.html"
 :local loginPage [/file find where name="hotspot/login.html"]
-:if ([:len $loginPage] = 0) do={
-:log warning "PisoPilot: hotspot/login.html is missing after the fetch - is app.py running and is $portalPort reachable from the router?"
+:if ([:len $loginPage] > 0) do={
+:log info ("PisoPilot: portal redirect page installed (" . $scratchSize . " bytes)")
 } else={
-:local loginPageId [:pick $loginPage 0]
-:local loginPageSize [/file get $loginPageId size]
-:local loginPageStatus [/file get $loginPageId status]
-:if ($loginPageSize > 500) do={
-:log info ("PisoPilot: portal redirect page installed (" . $loginPageSize . " bytes)")
-} else={
-:log warning ("PisoPilot: hotspot/login.html is only " . $loginPageSize . " bytes, status '" . $loginPageStatus . "' - it did not download. Start app.py, then re-run: /tool fetch url=http://" . $portalIp . ":" . $portalPort . "/hotspot/login.html dst-path=hotspot/login.html")
+:log warning "PisoPilot: the login page downloaded but could not be renamed into hotspot/login.html - check /file print where name~hotspot"
+}
 }
 }
 } on-error={
-:log warning ("PisoPilot: could not fetch login.html - start app.py, then re-run: /tool fetch url=http://" . $portalIp . ":" . $portalPort . "/hotspot/login.html dst-path=hotspot/login.html")
+:log warning ("PisoPilot: could not fetch login.html - start app.py, then re-run. RouterOS refuses to write hotspot/login.html directly, so the script downloads it to " . $scratchLogin . " and renames it; by hand: /tool fetch url=http://" . $portalIp . ":" . $portalPort . "/hotspot/login.html dst-path=hotspot/piso-login.tmp  then  /file set [find where name=hotspot/piso-login.tmp] name=hotspot/login.html")
 }
 
 # api.json answers the option 114 probe. Missing it does not break the phone -
