@@ -2,11 +2,16 @@
   const modal = document.getElementById('coin-session-modal');
   if (!modal) return;
 
-  const form = document.querySelector('.single-coin-form');
+  // The portal now renders the coin form twice: in the sticky dock at the top
+  // and in the detail card further down. Both must stay in lockstep, so they
+  // are tracked as lists rather than the single element they used to be.
+  const forms = Array.from(document.querySelectorAll('.single-coin-form'));
   const waitingBanner = document.getElementById('coin-waiting');
   const coinCopy = document.querySelector('#coin-action .action-copy');
   const coinStatus = document.querySelector('#coin-action .action-status');
-  const coinButton = document.querySelector('#coin-action .single-coin-form button');
+  const coinButtons = forms
+    .map((each) => each.querySelector('button[type="submit"]'))
+    .filter(Boolean);
   const count = modal.querySelector('#coin-session-count');
   const amount = modal.querySelector('#coin-session-amount');
   const minutes = modal.querySelector('#coin-session-minutes');
@@ -25,9 +30,14 @@
   let tickTimer = null;
   let busy = false;
 
-  if (coinCopy) coinCopy.textContent = 'Open a coin session, insert your coins, then finish when you are done. Need more time? Extend the countdown from the coin window.';
+  if (coinCopy) coinCopy.textContent = 'Tap once to open your coin session, insert your coins, then finish when you are done. Need more time? Extend the countdown from the coin window.';
   if (coinStatus) coinStatus.textContent = 'Your coin total and insertion countdown stay visible in the popup.';
-  if (coinButton) coinButton.textContent = 'Open coin window';
+
+  // Both coin buttons read "Insert Coin" and disable together, so the dock and
+  // the card can never disagree about whether a request is already open.
+  const setCoinButtonsDisabled = (disabled) => {
+    coinButtons.forEach((button) => { button.disabled = disabled; });
+  };
 
   const show = () => {
     modal.hidden = false;
@@ -111,7 +121,7 @@
         state.textContent = data.status === 'expired' ? 'TIMED OUT' : 'CLOSED';
         message.textContent = data.status === 'expired' ? 'Request timed out. Open a new coin request to try again.' : 'Coin request closed.';
         requestId = null;
-        if (form) form.querySelector('button[type="submit"]').disabled = false;
+        setCoinButtonsDisabled(false);
         window.clearInterval(pollTimer);
         window.clearInterval(tickTimer);
         window.setTimeout(hide, 1200);
@@ -177,7 +187,7 @@
       await postJson(modal.dataset.cancelUrl);
       hide();
       requestId = null;
-      if (form) form.querySelector('button[type="submit"]').disabled = false;
+      setCoinButtonsDisabled(false);
     } catch (requestError) {
       error.textContent = requestError.message;
     } finally {
@@ -206,13 +216,14 @@
     }
   };
 
-  if (form) {
-    form.addEventListener('submit', (event) => {
+  // Both forms are bound, so paying from the dock or the card behaves identically.
+  forms.forEach((each) => {
+    each.addEventListener('submit', (event) => {
       event.preventDefault();
-      form.querySelector('button[type="submit"]').disabled = true;
+      setCoinButtonsDisabled(true);
       startRequest();
     });
-  }
+  });
 
   cancel.addEventListener('click', cancelRequest);
   extend.addEventListener('click', extendTime);

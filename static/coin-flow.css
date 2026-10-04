@@ -7,6 +7,19 @@
 .coin-request-list[hidden] { display:none; }
 .single-coin-form { margin-top:16px; }.single-coin-form .portal-button { width:100%; }
 .portal-button:disabled { opacity:.62; cursor:not-allowed; }
+
+/* The coin dock: the paying action, first on the page and always reachable.
+   Sticks just under the portal header so a client reading the rates never has
+   to scroll back up to pay. z-index sits below the header (20) and above the
+   content, and it is hidden from assistive tech only when it is off screen. */
+.coin-dock { position:sticky; z-index:19; top:58px; display:flex; align-items:center; gap:14px; margin:0 0 18px; padding:12px 16px; border:1px solid #efd6a7; border-left:4px solid var(--orange); border-radius:4px; background:#fff8e9; box-shadow:0 2px 10px rgba(24,32,44,.07); }
+.coin-dock-copy { display:grid; gap:2px; flex:1; min-width:0; }
+.coin-dock-copy strong { font-size:.95rem; letter-spacing:-.2px; }
+.coin-dock-copy small { color:#8b744f; font-size:.7rem; line-height:1.35; }
+.coin-dock .single-coin-form { flex:0 0 auto; margin-top:0; }
+.coin-dock-button { min-width:158px; min-height:48px; padding:14px 20px; font-size:.86rem; text-align:center; }
+@media (max-width:760px) { .coin-dock { top:0; padding:10px 12px; }.coin-dock-button { min-width:132px; min-height:46px; padding:12px 14px; font-size:.8rem; }.coin-dock-copy strong { font-size:.88rem; } }
+@media (prefers-reduced-motion:no-preference) { .coin-dock { animation:coin-dock-in .32s ease-out; } @keyframes coin-dock-in { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:none; } } }
 .coin-cancel-form { margin:0; }.coin-cancel-form .text-button { margin-top:8px; }
 .coin-sim-total { display:grid; gap:5px; padding:15px 16px; border:1px solid #efd6a7; background:#fff8e9; }.coin-sim-total > span { color:#8b744f; font:10px "DM Mono",monospace; text-transform:uppercase; }.coin-sim-total > strong { font-size:1.32rem; letter-spacing:-.5px; }.coin-sim-total > small { color:#8b744f; font:10px "DM Mono",monospace; }
 /* Shows the plan mix the client's running total already covers. */

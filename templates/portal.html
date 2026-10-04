@@ -35,6 +35,15 @@
       </div>
     </header>
     <div class="net-alert" data-net-alert{% if internet.state != 'offline' %} hidden{% endif %}><div><strong>No internet right now.</strong> The machine's uplink is offline. Stay connected to the network &mdash; your coins are still counted and access resumes as soon as the link is back.</div></div>
+    {# The one action that earns money is the first thing on the page and stays
+       pinned while the client reads the rates. A guest must never have to
+       scroll to find how to pay. #}
+    <section class="coin-dock" id="coin-dock" aria-label="Insert coin">
+      <div class="coin-dock-copy"><strong>Insert Coin</strong><small>{% if pending_coin %}{% if auto_settle_seconds %}Your total settles {{ auto_settle_seconds }}s after your last coin.{% else %}Waiting for the operator.{% endif %}{% elif acceptor_busy %}Another customer is paying right now.{% else %}Tap once, then drop your coins in.{% endif %}</small></div>
+      {% if pending_coin %}<button class="portal-button coin-dock-button" type="button" disabled>Paying&hellip;</button>
+      {% elif acceptor_busy %}<button class="portal-button coin-dock-button" type="button" disabled>Acceptor in use</button>
+      {% else %}<form method="post" action="{{ url_for('request_coin') }}" class="single-coin-form"><button class="portal-button coin-dock-button" type="submit">Insert Coin</button></form>{% endif %}
+    </section>
     {% if pending_coin %}<section class="coin-waiting" id="coin-waiting" role="status" aria-live="polite" data-coin-count="{{ pending_coin.coin_count }}" data-coin-amount="{{ '%.2f'|format(pending_coin.amount) }}"><span class="coin-spinner"></span><div><strong id="coin-waiting-title">Coin request sent</strong><p id="coin-waiting-copy">{% if auto_settle_seconds %}Every coin is counted as it lands, and the whole total settles itself {{ auto_settle_seconds }} seconds after your last coin.{% else %}Waiting for the machine operator.{% endif %} <b><span id="pending-coin-count">{{ pending_coin.coin_count }}</span> coins</b> in / <b><span id="pending-coin-amount">P{{ '%.0f'|format(pending_coin.amount) }}</span> total</b> &rarr; <b><span id="pending-coin-minutes">{{ pending_reward.minutes }}</span> minutes</b> {% if auto_settle_seconds %}will be credited automatically.{% else %}will be applied when the operator finishes.{% endif %}</p><p class="coin-plan-line" id="pending-coin-plan">{% if pending_coin.coin_count %}Best rate for this total: {{ pending_reward.summary }}{% else %}Insert your first coin to see your best rate for the total.{% endif %}</p><form method="post" action="{{ url_for('cancel_coin_request') }}" class="coin-cancel-form"><button class="text-button" type="submit">Cancel request</button></form></div><span class="waiting-label" id="coin-waiting-label">WAITING</span></section>{% endif %}
 {% macro action_cards() %}
     <section class="action-grid" id="get-started">
