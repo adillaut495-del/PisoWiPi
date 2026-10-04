@@ -299,6 +299,62 @@ class MikroTikRouterAdapter:
         return {"status": "waiting-for-client-traffic", "name": mac_address}
 
 
+def describe_pin_fault(error):
+    """Turn a raw GPIO exception into something the operator can act on.
+
+    ``[Errno 22] Invalid argument`` on its own is famously unhelpful: it is what
+    gpiozero raises when it falls back to the legacy ``/sys/class/gpio`` backend
+    that modern kernels no longer provide, and it is also what a bad pin number
+    looks like. The two need completely different fixes, so they are told apart
+    here instead of leaving the console to show a bare errno.
+    """
+    text = str(error).strip()
+    lowered = text.lower()
+    errno = getattr(error, "errno", None)
+    # Some exceptions stringify with no errno ("[Errno None] ..."); drop that noise.
+    if errno is None and text.startswith("[Errno None]"):
+        text = text[len("[Errno None]") :].strip()
+
+    if "invalid argument" in lowered or errno == 22:
+        if os.path.isdir("/sys/class/gpio"):
+            return (
+                f"{text} - GPIO{coin_gpio_hint()} rejected by /sys/class/gpio. "
+                "Check the pin number, or another program may hold the pin."
+            )
+        return (
+            f"{text} - no usable GPIO backend: gpiozero fell back to /sys/class/gpio, "
+            "which this kernel no longer provides. Install the backend into the "
+            "service venv: sudo apt install -y python3-lgpio, then recreate it with "
+            "python3 -m venv --system-site-packages ~/.venv (verify with "
+            "~/.venv/bin/python -c 'import gpiozero, lgpio')."
+        )
+
+    if "already in use" in lowered or "busy" in lowered:
+        return f"{text} - another process holds this pin. Stop it and restart the service."
+
+    if "permission denied" in lowered or errno == 13:
+        return f"{text} - thegpio group is required: sudo usermod -aG gpio $USER, then reboot."
+
+    if "unable to load any default pin factory" in lowered:
+        return (
+            f"{text} - gpiozero found no pin backend at all. Install one into the "
+            "service venv (python3-lgpio) and recreate the venv with --system-site-packages."
+        )
+
+    if "not a valid" in lowered or "invalid pin" in lowered or "out of range" in lowered:
+        return f"{text} - GPIO{coin_gpio_hint()} is not a valid pin on this board."
+
+    return text
+
+
+def coin_gpio_hint():
+    """The pin the operator most likely means, for use in a fault message."""
+    listener = coin_listener
+    if listener is not None and getattr(listener, "config", None) is not None:
+        return str(listener.config.coin_gpio)
+    return str(HardwareConfig().coin_gpio)
+
+
 class CoinPulseListener:
     def __init__(self, on_coin: Callable[[float, int], None], config: HardwareConfig | None = None):
         self.config = config or HardwareConfig()
@@ -339,8 +395,9 @@ class CoinPulseListener:
             # the fault. Leave the pin unclaimed, report it, and keep serving - the console
             # shows the acceptor as offline.
             self.device = None
-            LOGGER.error("could not claim GPIO%s for the coin acceptor: %s", self.config.coin_gpio, error)
-            return {"status": "offline", "gpio": self.config.coin_gpio, "detail": str(error)}
+            detail = describe_pin_fault(error)
+            LOGGER.error("could not claim GPIO%s for the coin acceptor: %s", self.config.coin_gpio, detail)
+            return {"status": "offline", "gpio": self.config.coin_gpio, "detail": detail}
         if self.config.coin_active_low:
             self.device.when_deactivated = self._pulse
         else:
