@@ -138,6 +138,63 @@ def main(argv=None) -> int:
 
     files, _, error = timed(adapter._request, "GET", "file")
     files = files if isinstance(files, list) else ([files] if files else [])
+
+    # Client isolation: a phone able to reach another phone defeats a paid
+    # hotspot, since one customer could browse on another's connection.
+    print()
+    print("3b. Client isolation")
+    wifi, _, wifi_error = timed(adapter._request, "GET", "interface/wifi")
+    wifi = wifi if isinstance(wifi, list) else ([wifi] if wifi else [])
+    if wifi_error is not None or not wifi:
+        report.note("could not read /rest/interface/wifi: " + str(wifi_error or "no wifi interface"))
+    else:
+        # The radio property is spelled differently across RouterOS releases and
+        # hAP ax lite firmware has been seen to reject isolation-type, so this is
+        # reported for information only - it is set in WinBox, not by the script.
+        # The firewall rule below is the layer this project owns and enforces.
+        settings = {}
+        for entry in wifi:
+            settings[str(entry.get("name"))] = {
+                "isolation-type": entry.get("isolation-type"),
+                "client-isolation": entry.get("client-isolation"),
+            }
+        report.note("radio isolation (set in WinBox -> WiFi): " + str(settings))
+    # Both spellings are accepted here; only an explicit non-isolated value on
+    # both keys is worth flagging, and even then it is a note, not a failure.
+
+    filters, _, filter_error = timed(adapter._request, "GET", "ip/firewall/filter")
+    filters = filters if isinstance(filters, list) else ([filters] if filters else [])
+    if filter_error is not None:
+        report.check("firewall backstop rule present", False, str(filter_error))
+    else:
+        isolation_rules = [
+            entry for entry in filters
+            if "isolate clients from each other" in str(entry.get("comment", ""))
+        ]
+        if not isolation_rules:
+            report.check("firewall backstop rule present", False, "rule not found")
+            report.note('Re-import the .rsc, then /ip/firewall/filter print where comment~"isolate clients"')
+        else:
+            first = isolation_rules[0]
+            report.check(
+                "firewall backstop rule drops client-to-client",
+                str(first.get("action", "")).lower() == "drop",
+                "dst=" + str(first.get("dst-address", "?")),
+            )
+            # Useless in the wrong spot: anything above "established,related"
+            # accepts a session a phone already had open to another phone.
+            order = [str(entry.get("comment", "")) for entry in filters]
+            established = next((i for i, text in enumerate(order) if "established,related" in text), None)
+            here = next(
+                (i for i, entry in enumerate(filters)
+                 if "isolate clients from each other" in str(entry.get("comment", ""))),
+                None,
+            )
+            report.check(
+                "isolation rule sits above established,related",
+                established is None or (here is not None and here < established),
+                f"isolation at {here}, established at {established}",
+            )
     hotspot_files = sorted(str(item.get("name", "")) for item in files if "hotspot" in str(item.get("name", "")))
     if hotspot_files:
         report.note("what the router has under hotspot/: " + ", ".join(hotspot_files))

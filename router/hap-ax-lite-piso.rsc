@@ -176,8 +176,10 @@
     /interface/wifi set [find where name=$wifiIface] configuration.country=$wifiCountry
 }
 
-
 }
+
+
+
  
 :do {
 :local dmMode [/system/device-mode get mode]
@@ -286,6 +288,20 @@
 :if ([:len [/ip/firewall/filter find where comment="PisoPilot: walled garden to the router DNS"]] = 0) do={
 /ip/firewall/filter add chain=forward in-interface=$guestBridge dst-address=$guestGateway action=accept comment="PisoPilot: walled garden to the router DNS"
 }
+# Client isolation, backstop layer. The radio's own isolation (WinBox -> WiFi ->
+# "Isolate" / "Client Isolation") stops phones reaching each other before IP, but
+# the property that spells it moved between RouterOS releases and an unknown
+# property is a PARSE error that stops the whole import before on-error can run.
+# So the radio setting is left to WinBox and this layer is the one the script
+# owns. It is scoped to the guest bridge and the guest subnet only, so it cannot
+# touch the portal (192.168.88.2, on the LAN), the router DNS (accepted just
+# above), or the wired LAN on "bridge".
+# Placed ABOVE "established,related" on purpose: a client that already has a
+# session open to another phone must still be cut off, not waved through by the
+# established rule.
+:if ([:len [/ip/firewall/filter find where comment="PisoPilot: isolate clients from each other"]] = 0) do={
+/ip/firewall/filter add chain=forward in-interface=$guestBridge dst-address=$guestNetwork action=drop comment="PisoPilot: isolate clients from each other" log=no
+}
 :if ([:len [/ip/firewall/filter find where comment="PisoPilot: drop unpaid clients"]] = 0) do={
 /ip/firewall/filter add chain=forward in-interface=$guestBridge hotspot=!auth action=drop comment="PisoPilot: drop unpaid clients" log=no
 }
@@ -304,12 +320,36 @@
 /ip/firewall/filter add chain=forward action=accept connection-state=established,related hotspot=auth comment="PisoPilot: preserve HotSpot queues"
 }
 /ip/firewall/filter set [find where comment="PisoPilot: preserve HotSpot queues"] chain=forward action=accept connection-state=established,related hotspot=auth
-/ip/firewall/filter move [find where comment="PisoPilot: preserve HotSpot queues"] 0
+# Moving a rule that is already at the top, or one the router treats as built in,
+# makes RouterOS throw "cannot move builtin" and that aborts the whole import
+# half way through, leaving the rest of the setup unapplied. The move is an
+# optimisation (it keeps HotSpot traffic out of FastTrack), so a failure here
+# must not stop the script.
+:do {
+    :local queueRule [/ip/firewall/filter find where comment="PisoPilot: preserve HotSpot queues"]
+    # Only move when it is not already the first rule: RouterOS rejects a no-op
+    # move with "cannot move builtin" and that aborts the whole import.
+    :if ([:len $queueRule] > 0) do={
+        :local queuePosition [/ip/firewall/filter find where comment="PisoPilot: preserve HotSpot queues"]
+        :local firstRule [/ip/firewall/filter find]
+        :if ([:len $queuePosition] > 0 && [:len $firstRule] > 0 && [:pick $queuePosition 0] != [:pick $firstRule 0]) do={
+            /ip/firewall/filter move [:pick $queuePosition 0] 0
+        }
+    }
+} on-error={
+    :log warning ("PisoPilot: could not move 'preserve HotSpot queues' to the top - check the order in /ip/firewall/filter print")
+}
  
 :local hsDynamicCount [:len [/ip/firewall/filter find where dynamic=yes]]
 :log info ("PisoPilot: " . $hsDynamicCount . " dynamic HotSpot rule(s) in the filter table")
 :if ([:len [/ip/firewall/filter find where comment="PisoPilot: drop unpaid clients"]] > 0) do={
-:local pisoOrder {"PisoPilot: established,related"; "PisoPilot: walled garden to the portal"; "PisoPilot: walled garden to the router DNS"; "PisoPilot: drop unpaid clients"}
+    # The whole reorder is best-effort. Every move can fail on its own (a rule
+    # already in place, or one the router will not let us move), and a single
+    # uncaught failure here would abort the import and leave the rest of the
+    # setup unapplied. Ordering only matters for correctness of the gate, which
+    # the individual rules already enforce, so a failure is logged and skipped.
+    :do {
+:local pisoOrder {"PisoPilot: isolate clients from each other"; "PisoPilot: established,related"; "PisoPilot: walled garden to the portal"; "PisoPilot: walled garden to the router DNS"; "PisoPilot: drop unpaid clients"}
 :local pisoPosition $hsDynamicCount
 :foreach pisoComment in=$pisoOrder do={
 :local pisoRule [/ip/firewall/filter find where comment=$pisoComment]
@@ -321,6 +361,9 @@
 :log warning ("PisoPilot: could not re-order the firewall rule '" . $pisoComment . "' - check the order in /ip/firewall/filter print")
 }
 }
+}
+} on-error={
+:log warning "PisoPilot: firewall re-order stopped early - check /ip/firewall/filter print"
 }
 }
  

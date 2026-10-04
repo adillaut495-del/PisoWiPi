@@ -44,6 +44,12 @@ KNOWN_PROPERTIES: dict[str, set[str]] = {
         "configuration.country",
         "security.authentication-types",
         "security.passphrase",
+        # Deliberately NOT listing any client-isolation property here. The name
+        # moved between RouterOS releases (client-isolation on older builds,
+        # isolation-type on some 7.13+ ones), and an unknown property is a parse
+        # error that stops the import outright. Since hAP ax lite firmware in
+        # the field has been seen to reject isolation-type, the radio setting is
+        # done in WinBox and the firewall rule is what the script owns.
     },
     "/ip/address": {"address", "interface", "comment"},
     "/ip/pool": {"name", "ranges", "comment"},
