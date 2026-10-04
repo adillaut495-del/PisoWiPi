@@ -543,6 +543,31 @@ def check_hotspot_scope(text: str) -> list[str]:
                 f"the guest side may be gated: {code.strip()}"
             )
             break
+
+    # A client-isolation drop that swallows the guest gateway takes DNS down with
+    # it: the DHCP server hands out 192.168.90.1 as the resolver, so phones
+    # resolve nothing, never finish a captive-portal probe, and report "no
+    # internet" instead of "sign in to network". The gateway must be excluded.
+    # Matched against the RAW line, not code_before_comment: that helper strips
+    # quoted strings, which is exactly where the comment text lives, so using it
+    # here matched nothing at all.
+    for number, raw in enumerate(text.splitlines(), start=1):
+        if "isolate clients from each other" not in raw:
+            continue
+        # Only the rule-creating lines matter. The `:if ... find where comment=`
+        # guards and the reorder list also name the rule but never drop traffic,
+        # so requiring "action=drop" leaves those out.
+        if "/ip/firewall/filter" not in raw or "action=drop" not in raw:
+            continue
+        if "!$guestGateway" in raw or "!192.168.90.1" in raw:
+            continue
+        problems.append(
+            f"line {number}: the client-isolation drop covers the whole guest subnet, "
+            "which includes the DHCP/DNS gateway 192.168.90.1. Dropping it leaves "
+            "clients unable to resolve anything, so they show 'no internet' rather "
+            "than 'sign in to network'. Exclude the gateway: "
+            'dst-address="$guestNetwork,!$guestGateway"'
+        )
     return problems
 
 

@@ -289,18 +289,30 @@
 /ip/firewall/filter add chain=forward in-interface=$guestBridge dst-address=$guestGateway action=accept comment="PisoPilot: walled garden to the router DNS"
 }
 # Client isolation, backstop layer. The radio's own isolation (WinBox -> WiFi ->
-# "Isolate" / "Client Isolation") stops phones reaching each other before IP, but
-# the property that spells it moved between RouterOS releases and an unknown
-# property is a PARSE error that stops the whole import before on-error can run.
-# So the radio setting is left to WinBox and this layer is the one the script
-# owns. It is scoped to the guest bridge and the guest subnet only, so it cannot
-# touch the portal (192.168.88.2, on the LAN), the router DNS (accepted just
-# above), or the wired LAN on "bridge".
-# Placed ABOVE "established,related" on purpose: a client that already has a
-# session open to another phone must still be cut off, not waved through by the
-# established rule.
+# Isolate / Client Isolation) stops phones reaching each other before IP, but the
+# property that spells it moved between RouterOS releases and an unknown property
+# is a PARSE error that stops the whole import before on-error can run. So the
+# radio setting is left to WinBox and this layer is what the script owns.
+#
+# The guest gateway MUST be excluded from the drop. It sits inside the guest
+# subnet and it is the DHCP server, which hands out 192.168.90.1 as the resolver.
+# Dropping the whole subnet therefore takes DNS with it: the phone resolves
+# nothing, never completes a captive-portal probe, and reports "no internet"
+# instead of "sign in to network". Excluding the gateway by address keeps
+# client-to-client traffic blocked while DNS and the HotSpot still answer.
+# Scoped to the guest bridge, so the wired LAN on "bridge" is untouched, and the
+# portal is on the LAN at 192.168.88.2 so it is outside this subnet entirely.
+# Ordered ABOVE "established,related" so a phone that already had a session open
+# to another phone is still cut off rather than waved through.
 :if ([:len [/ip/firewall/filter find where comment="PisoPilot: isolate clients from each other"]] = 0) do={
-/ip/firewall/filter add chain=forward in-interface=$guestBridge dst-address=$guestNetwork action=drop comment="PisoPilot: isolate clients from each other" log=no
+/ip/firewall/filter add chain=forward in-interface=$guestBridge dst-address=($guestNetwork . ",!$guestGateway") action=drop comment="PisoPilot: isolate clients from each other" log=no
+}
+# Re-import safety: the guard above only ADDS a missing rule, so a router that
+# already carries the earlier version - which dropped the guest gateway along
+# with everything else and so took DNS down with it - would keep it. Force the
+# address list back onto the current form on every run.
+:if ([:len [/ip/firewall/filter find where comment="PisoPilot: isolate clients from each other"]] > 0) do={
+/ip/firewall/filter set [find where comment="PisoPilot: isolate clients from each other"] in-interface=$guestBridge dst-address=($guestNetwork . ",!$guestGateway") action=drop
 }
 :if ([:len [/ip/firewall/filter find where comment="PisoPilot: drop unpaid clients"]] = 0) do={
 /ip/firewall/filter add chain=forward in-interface=$guestBridge hotspot=!auth action=drop comment="PisoPilot: drop unpaid clients" log=no
