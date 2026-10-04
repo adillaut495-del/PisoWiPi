@@ -111,12 +111,26 @@ def report_holders():
 def suggest_fix(backend, error, gpio):
     print("\nMost likely fix")
     errno = getattr(error, "errno", None)
-    if backend is None:
-        print("  No pin backend is loaded, so no pin can ever be claimed.")
+    name = type(backend).__name__ if backend is not None else ""
+
+    if backend is None or name == "NativeFactory":
+        # NativeFactory is gpiozero's pure-Python last resort, not a driver. It
+        # mmaps /dev/gpiomem and pokes SoC registers, and it only knows the
+        # register maps for BCM2835/2836/2837/2711. On a Pi 5 (BCM2712) it
+        # simply cannot claim a pin, and errno 22 is the symptom.
+        if name == "NativeFactory":
+            print("  gpiozero is using NativeFactory - its pure-Python fallback, NOT a")
+            print("  real driver. That is why the claim fails with errno 22.")
+            print("  No real GPIO driver is installed in this interpreter, so fix that:")
+        else:
+            print("  No pin backend is loaded, so no pin can ever be claimed.")
         print("    sudo apt install -y python3-lgpio")
         print("    rm -rf ~/.venv && python3 -m venv --system-site-packages ~/.venv")
         print(f"    {sys.executable} -m pip install -r requirements.txt")
-        print("  Then re-run this script with the venv python and expect SUCCESS.")
+        print()
+        print("  Then confirm the backend changed - it must be an LGPIOFactory:")
+        print("    ~/.venv/bin/python -c 'from gpiozero import Device; print(Device.pin_factory)'")
+        print("  If it still says NativeFactory, lgpio is not visible to the venv.")
     elif errno == 13:
         print("  Permission denied. Add the service user to the gpio group, then reboot:")
         print("    sudo usermod -aG gpio $(whoami)")
@@ -124,11 +138,10 @@ def suggest_fix(backend, error, gpio):
         print("  Another process holds the pin. Stop it before testing:")
         print("    sudo systemctl stop piso-wifi")
     else:
-        print("  The backend loaded but the kernel rejected the line. Check that:")
+        print("  A real backend loaded but the kernel rejected the line. Check that:")
         print(f"    - GPIO{gpio} is a valid BCM pin on this board (see `gpioinfo` above)")
         print("    - it is not already exported by another service")
-        print("    - the relay really is wired to the pin you think it is; a wrong pin")
-        print("      number is the usual cause of errno 22 with a working backend")
+        print("    - the relay really is wired to the pin you think it is")
 
 
 def main(argv=None) -> int:

@@ -325,6 +325,11 @@ def gpio_backend_report():
     chip = getattr(factory, "chip", None)
     detail = f"{name} on gpiochip{chip}" if chip is not None else name
 
+    # NativeFactory is a pure-Python fallback, not a driver. Saying so plainly
+    # saves the operator from hunting a wiring fault that does not exist.
+    if "NATIVE" in name.upper():
+        return f"{detail} (pure-Python fallback, NOT a real driver)"
+
     # Name the backing library and version: that is what the operator installs.
     if "LGPIO" in name.upper():
         version = None
@@ -369,10 +374,32 @@ def describe_pin_fault(error):
     # fallback: gpiozero 2.x removed the sysfs factory entirely.
     prefix = f"{text} (backend: {backend})"
 
-    # Specific errors are matched BEFORE the "no backend" case on purpose. If no
-    # backend were loaded the claim would fail with the factory error, never with
-    # errno 22, so reaching here with a specific errno means a backend *is*
-    # driving the pin and that is the diagnosis worth giving. Checking the
+    # NativeFactory is not a real driver: it is gpiozero's pure-Python
+    # last-resort implementation, which mmaps /dev/gpiomem and drives the SoC
+    # registers directly. It only knows the register maps for BCM2835/2836/
+    # 2837/2711 and exports the line through /sys/class/gpio, which modern
+    # kernels no longer provide. So on a Pi 5 (BCM2712) or any board without
+    # that sysfs interface it cannot work, and it fails exactly like this. The
+    # fix is a real backend, which is why this is checked before errno 22: the
+    # errno is a symptom, the missing driver is the cause.
+    if "native" in backend.lower():
+        return (
+            f"{prefix} - gpiozero fell back to NativeFactory, its pure-Python "
+            "fallback, because no real GPIO driver (lgpio / RPi.GPIO / pigpio) is "
+            "installed in the service venv. That fallback drives SoC registers "
+            "directly and only supports older Pi chips, so it cannot claim pins on "
+            "a current board. Fix the backend, not the wiring: "
+            "sudo apt install -y python3-lgpio, then recreate the venv with "
+            "python3 -m venv --system-site-packages ~/.venv, reinstall "
+            "requirements.txt, then confirm with "
+            "~/.venv/bin/python -c 'from gpiozero import Device; print(Device.pin_factory)' "
+            "- it must print an LGPIOFactory, not NativeFactory."
+        )
+
+    # Specific errors are matched BEFORE the generic "no backend" case on purpose.
+    # If no backend were loaded the claim would fail with the factory error, never
+    # with errno 22, so reaching here with a specific errno means a real backend
+    # *is* driving the pin and that is the diagnosis worth giving. Checking the
     # backend first would mask a real pin fault behind a backend message.
     if "invalid argument" in lowered or errno == 22:
         return (
